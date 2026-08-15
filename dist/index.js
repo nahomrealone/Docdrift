@@ -30121,18 +30121,38 @@ function extractChangedLines(patch) {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.publishDocDriftComment = publishDocDriftComment;
 const COMMENT_MARKER = "<!-- docdrift-report -->";
-async function publishDocDriftComment(octokit, owner, repo, pullNumber, findings) {
+function buildReport(findings) {
     let body = `${COMMENT_MARKER}\n## 📚 DocDrift Report\n\n`;
     if (findings.length === 0) {
         body += "✅ No documentation drift detected.";
+        return body;
     }
-    else {
-        body += `⚠️ Found **${findings.length} documentation issue(s)**.\n\n`;
-        for (const finding of findings) {
-            body += `### ${finding.documentationFile}\n`;
-            body += `- **Problem:** ${finding.message}\n`;
-            body += `- **Stale reference:** \`${finding.reference}\`\n\n`;
-        }
+    body += `⚠️ Found **${findings.length} documentation issue(s)**.\n\n`;
+    for (const finding of findings) {
+        body += `### ${finding.documentationFile}\n`;
+        body += `- **Problem:** ${finding.message}\n`;
+        body += `- **Stale reference:** \`${finding.reference}\`\n\n`;
+    }
+    return body;
+}
+async function publishDocDriftComment(octokit, owner, repo, pullNumber, findings) {
+    const body = buildReport(findings);
+    const comments = await octokit.paginate(octokit.rest.issues.listComments, {
+        owner,
+        repo,
+        issue_number: pullNumber,
+        per_page: 100,
+    });
+    const existingComment = comments.find((comment) => typeof comment.body === "string" &&
+        comment.body.includes(COMMENT_MARKER));
+    if (existingComment) {
+        await octokit.rest.issues.updateComment({
+            owner,
+            repo,
+            comment_id: existingComment.id,
+            body,
+        });
+        return;
     }
     await octokit.rest.issues.createComment({
         owner,
