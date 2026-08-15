@@ -29982,6 +29982,130 @@ function classifyFile(filename) {
 
 /***/ }),
 
+/***/ 5566:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.detectStaleApiRoutes = detectStaleApiRoutes;
+const fs = __importStar(__nccwpck_require__(3024));
+const api_routes_1 = __nccwpck_require__(3651);
+const git_file_1 = __nccwpck_require__(5631);
+const route_suggestions_1 = __nccwpck_require__(1050);
+const ROUTE_SOURCE_EXTENSIONS = [
+    ".ts",
+    ".tsx",
+    ".js",
+    ".jsx",
+    ".mjs",
+    ".cjs",
+];
+function isRouteSourceFile(filename) {
+    const normalized = filename.toLowerCase();
+    return ROUTE_SOURCE_EXTENSIONS.some((extension) => normalized.endsWith(extension));
+}
+function buildRouteInventory(ref) {
+    const routes = [];
+    const files = (0, git_file_1.listFilesAtRef)(ref).filter(isRouteSourceFile);
+    for (const filename of files) {
+        const content = (0, git_file_1.readFileAtRef)(ref, filename);
+        if (!content) {
+            continue;
+        }
+        routes.push(...(0, api_routes_1.parseApiRoutes)(content, filename));
+    }
+    return routes;
+}
+function documentationReferencesRoute(documentation, route) {
+    const escapedPath = route.path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = new RegExp(`${route.method}\\s+\`?${escapedPath}\`?`, "i");
+    return pattern.test(documentation);
+}
+function detectStaleApiRoutes(changedFiles, baseSha, headSha, documentationFiles) {
+    const findings = [];
+    if (!changedFiles.some((file) => isRouteSourceFile(file.filename))) {
+        return findings;
+    }
+    const oldRoutes = buildRouteInventory(baseSha);
+    const currentRoutes = buildRouteInventory(headSha);
+    const oldRouteKeys = new Set(oldRoutes.map(api_routes_1.getRouteKey));
+    const currentRouteKeys = new Set(currentRoutes.map(api_routes_1.getRouteKey));
+    const addedRoutes = currentRoutes.filter((route) => !oldRouteKeys.has((0, api_routes_1.getRouteKey)(route)));
+    const oldRoutesByKey = new Map();
+    for (const route of oldRoutes) {
+        const key = (0, api_routes_1.getRouteKey)(route);
+        if (!oldRoutesByKey.has(key)) {
+            oldRoutesByKey.set(key, route);
+        }
+    }
+    for (const [routeKey, oldRoute] of oldRoutesByKey) {
+        if (currentRouteKeys.has(routeKey)) {
+            continue;
+        }
+        const replacement = (0, route_suggestions_1.findRouteReplacement)(oldRoute, addedRoutes);
+        for (const documentationFile of documentationFiles) {
+            if (!fs.existsSync(documentationFile)) {
+                continue;
+            }
+            const documentation = fs.readFileSync(documentationFile, "utf8");
+            if (!documentationReferencesRoute(documentation, oldRoute)) {
+                continue;
+            }
+            findings.push({
+                type: "stale-api-route",
+                documentationFile,
+                reference: routeKey,
+                message: `${documentationFile} references "${routeKey}", but that API route ` +
+                    "no longer exists in the current codebase.",
+                ...(replacement
+                    ? {
+                        suggestion: (0, route_suggestions_1.describeRoute)(replacement.route),
+                        confidence: replacement.confidence,
+                    }
+                    : {}),
+            });
+        }
+    }
+    return findings;
+}
+
+
+/***/ }),
+
 /***/ 5307:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -30198,6 +30322,101 @@ function detectStalePackageScripts(changedLines, documentationFiles) {
 
 /***/ }),
 
+/***/ 1050:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.findRouteReplacement = findRouteReplacement;
+exports.describeRoute = describeRoute;
+const api_routes_1 = __nccwpck_require__(3651);
+function getSegments(path) {
+    return path.split("/").filter(Boolean);
+}
+function isDynamicSegment(segment) {
+    return (segment.startsWith(":") || segment.startsWith("{") || segment === "*");
+}
+function dynamicShapeScore(firstPath, secondPath) {
+    const first = getSegments(firstPath);
+    const second = getSegments(secondPath);
+    if (first.length !== second.length || first.length === 0) {
+        return 0;
+    }
+    let matches = 0;
+    for (let index = 0; index < first.length; index++) {
+        const firstSegment = first[index];
+        const secondSegment = second[index];
+        if (firstSegment !== undefined &&
+            secondSegment !== undefined &&
+            isDynamicSegment(firstSegment) === isDynamicSegment(secondSegment)) {
+            matches++;
+        }
+    }
+    return matches / first.length;
+}
+function levenshtein(first, second) {
+    const matrix = Array.from({ length: first.length + 1 }, () => new Array(second.length + 1).fill(0));
+    for (let index = 0; index <= first.length; index++) {
+        matrix[index][0] = index;
+    }
+    for (let index = 0; index <= second.length; index++) {
+        matrix[0][index] = index;
+    }
+    for (let firstIndex = 1; firstIndex <= first.length; firstIndex++) {
+        for (let secondIndex = 1; secondIndex <= second.length; secondIndex++) {
+            const cost = first[firstIndex - 1] === second[secondIndex - 1] ? 0 : 1;
+            matrix[firstIndex][secondIndex] = Math.min(matrix[firstIndex - 1][secondIndex] + 1, matrix[firstIndex][secondIndex - 1] + 1, matrix[firstIndex - 1][secondIndex - 1] + cost);
+        }
+    }
+    return matrix[first.length][second.length];
+}
+function stringSimilarity(first, second) {
+    const longest = Math.max(first.length, second.length);
+    if (longest === 0) {
+        return 1;
+    }
+    return 1 - levenshtein(first, second) / longest;
+}
+function scoreCandidate(removed, candidate) {
+    if (removed.method !== candidate.method) {
+        return 0;
+    }
+    const oldSegments = getSegments(removed.path);
+    const newSegments = getSegments(candidate.path);
+    let score = 0.45;
+    if (oldSegments.length === newSegments.length) {
+        score += 0.2;
+    }
+    score += dynamicShapeScore(removed.path, candidate.path) * 0.2;
+    score += stringSimilarity(removed.path, candidate.path) * 0.15;
+    return Math.min(score, 1);
+}
+function findRouteReplacement(removedRoute, addedRoutes) {
+    const candidates = addedRoutes
+        .map((route) => ({
+        route,
+        confidence: scoreCandidate(removedRoute, route),
+    }))
+        .filter((candidate) => candidate.confidence >= 0.72)
+        .sort((first, second) => second.confidence - first.confidence);
+    const best = candidates[0];
+    const second = candidates[1];
+    if (!best) {
+        return null;
+    }
+    if (second && best.confidence - second.confidence < 0.08) {
+        return null;
+    }
+    return best;
+}
+function describeRoute(route) {
+    return (0, api_routes_1.getRouteKey)(route);
+}
+
+
+/***/ }),
+
 /***/ 9952:
 /***/ ((__unused_webpack_module, exports) => {
 
@@ -30251,7 +30470,14 @@ function buildReport(findings) {
     for (const finding of findings) {
         body += `### ${finding.documentationFile}\n`;
         body += `- **Problem:** ${finding.message}\n`;
-        body += `- **Stale reference:** \`${finding.reference}\`\n\n`;
+        body += `- **Stale reference:** \`${finding.reference}\`\n`;
+        if (finding.suggestion) {
+            body += `- **Possible replacement:** \`${finding.suggestion}\`\n`;
+        }
+        if (finding.confidence !== undefined) {
+            body += `- **Confidence:** ${Math.round(finding.confidence * 100)}%\n`;
+        }
+        body += "\n";
     }
     return body;
 }
@@ -30327,6 +30553,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 const core = __importStar(__nccwpck_require__(7484));
 const github = __importStar(__nccwpck_require__(3228));
 const classify_1 = __nccwpck_require__(3813);
+const api_routes_1 = __nccwpck_require__(5566);
 const env_vars_1 = __nccwpck_require__(5307);
 const package_scripts_1 = __nccwpck_require__(2630);
 const diff_1 = __nccwpck_require__(9952);
@@ -30345,6 +30572,8 @@ async function run() {
             throw new Error("DocDrift must run on a pull request.");
         }
         const pullNumber = pullRequest.number;
+        const baseSha = pullRequest.base.sha;
+        const headSha = pullRequest.head.sha;
         core.info(`Repository: ${owner}/${repo}`);
         core.info(`Pull Request: #${pullNumber}`);
         const files = await octokit.paginate(octokit.rest.pulls.listFiles, {
@@ -30399,6 +30628,8 @@ async function run() {
         }
         const environmentFindings = (0, env_vars_1.detectStaleEnvironmentVariables)(changedCodeForAnalysis, currentCodeFiles, trackedDocumentationFiles);
         findings.push(...environmentFindings);
+        const apiRouteFindings = (0, api_routes_1.detectStaleApiRoutes)(codeFiles, baseSha, headSha, trackedDocumentationFiles);
+        findings.push(...apiRouteFindings);
         core.info("");
         core.info("🔎 Documentation Drift Analysis");
         if (findings.length === 0) {
@@ -30421,6 +30652,149 @@ async function run() {
     }
 }
 run();
+
+
+/***/ }),
+
+/***/ 3651:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.parseApiRoutes = parseApiRoutes;
+exports.getRouteKey = getRouteKey;
+const express_routes_1 = __nccwpck_require__(8143);
+const nestjs_routes_1 = __nccwpck_require__(8038);
+function parseApiRoutes(content, filename) {
+    return [
+        ...(0, express_routes_1.parseExpressRoutes)(content, filename),
+        ...(0, nestjs_routes_1.parseNestJsRoutes)(content, filename),
+    ];
+}
+function getRouteKey(route) {
+    return `${route.method} ${route.path}`;
+}
+
+
+/***/ }),
+
+/***/ 8143:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.parseExpressRoutes = parseExpressRoutes;
+const EXPRESS_ROUTE_PATTERN = /\b(app|router)\s*\.\s*(get|post|put|patch|delete|options|head)\s*\(\s*(["'`])([^"'`]+)\3\s*,/g;
+function parseExpressRoutes(content, filename) {
+    const routes = [];
+    for (const match of content.matchAll(EXPRESS_ROUTE_PATTERN)) {
+        const methodName = match[2];
+        const path = match[4];
+        if (!methodName || !path || path.includes("${")) {
+            continue;
+        }
+        const method = methodName.toUpperCase();
+        routes.push({
+            method,
+            path,
+            file: filename,
+            framework: "express",
+        });
+    }
+    return routes;
+}
+
+
+/***/ }),
+
+/***/ 8038:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.parseNestJsRoutes = parseNestJsRoutes;
+const CONTROLLER_PATTERN = /@Controller\s*\(\s*(?:(["'`])([^"'`]*)\1)?\s*\)/g;
+const ROUTE_PATTERN = /@(Get|Post|Put|Patch|Delete|Options|Head)\s*\(\s*(?:(["'`])([^"'`]*)\2)?\s*\)/g;
+function joinPaths(controllerPath, methodPath) {
+    const controller = controllerPath.replace(/^\/+|\/+$/g, "");
+    const method = methodPath.replace(/^\/+|\/+$/g, "");
+    const parts = [controller, method].filter(Boolean);
+    if (parts.length === 0) {
+        return "/";
+    }
+    return `/${parts.join("/")}`;
+}
+function parseNestJsRoutes(content, filename) {
+    const routes = [];
+    const controllers = [...content.matchAll(CONTROLLER_PATTERN)];
+    for (let index = 0; index < controllers.length; index++) {
+        const controller = controllers[index];
+        if (!controller) {
+            continue;
+        }
+        const controllerPath = controller[2] ?? "";
+        if (controllerPath.includes("${")) {
+            continue;
+        }
+        const sectionStart = (controller.index ?? 0) + controller[0].length;
+        const sectionEnd = controllers[index + 1]?.index ?? content.length;
+        const controllerSection = content.slice(sectionStart, sectionEnd);
+        for (const routeMatch of controllerSection.matchAll(ROUTE_PATTERN)) {
+            const methodName = routeMatch[1];
+            const methodPath = routeMatch[3] ?? "";
+            if (!methodName || methodPath.includes("${")) {
+                continue;
+            }
+            const method = methodName.toUpperCase();
+            routes.push({
+                method,
+                path: joinPaths(controllerPath, methodPath),
+                file: filename,
+                framework: "nestjs",
+            });
+        }
+    }
+    return routes;
+}
+
+
+/***/ }),
+
+/***/ 5631:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.readFileAtRef = readFileAtRef;
+exports.listFilesAtRef = listFilesAtRef;
+const node_child_process_1 = __nccwpck_require__(1421);
+function readFileAtRef(ref, filename) {
+    try {
+        return (0, node_child_process_1.execFileSync)("git", ["show", `${ref}:${filename}`], {
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "ignore"],
+        });
+    }
+    catch {
+        return null;
+    }
+}
+function listFilesAtRef(ref) {
+    try {
+        const output = (0, node_child_process_1.execFileSync)("git", ["ls-tree", "-r", "--name-only", ref], {
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "ignore"],
+        });
+        return output.split(/\r?\n/).filter(Boolean);
+    }
+    catch {
+        return [];
+    }
+}
 
 
 /***/ }),
