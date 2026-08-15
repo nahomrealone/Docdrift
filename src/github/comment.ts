@@ -19,6 +19,16 @@ function buildReport(findings: DocumentationFinding[]): string {
     body += `- **Problem:** ${finding.message}\n`;
     body += `- **Stale reference:** \`${finding.reference}\`\n`;
 
+    if (finding.locations && finding.locations.length > 0) {
+      for (const location of finding.locations) {
+        body += `- **Line:** ${location.line}\n`;
+
+        if (location.section.length > 0) {
+          body += `- **Section:** ${location.section.join(" → ")}\n`;
+        }
+      }
+    }
+
     if (finding.suggestion) {
       body += `- **Possible replacement:** \`${finding.suggestion}\`\n`;
     }

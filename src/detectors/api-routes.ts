@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 
+import { locateReference } from "../documentation/locator";
 import { getRouteKey, parseApiRoutes } from "../parsers/api-routes";
 import { listFilesAtRef, readFileAtRef } from "../repository/git-file";
 import type { DocumentationFinding } from "../types/finding";
@@ -104,6 +105,12 @@ export function detectStaleApiRoutes(
         continue;
       }
 
+      const locations = locateReference(documentation, routeKey);
+
+      if (locations.length === 0) {
+        continue;
+      }
+
       findings.push({
         type: "stale-api-route",
         documentationFile,
@@ -111,6 +118,7 @@ export function detectStaleApiRoutes(
         message:
           `${documentationFile} references "${routeKey}", but that API route ` +
           "no longer exists in the current codebase.",
+        locations,
         ...(replacement
           ? {
               suggestion: describeRoute(replacement.route),

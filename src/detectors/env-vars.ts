@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 
 import type { ChangedLine } from "../diff";
+import { locateReference } from "../documentation/locator";
 import type { DocumentationFinding } from "../types/finding";
 
 interface ChangedCodeFile {
@@ -98,6 +99,12 @@ export function detectStaleEnvironmentVariables(
         continue;
       }
 
+      const locations = locateReference(documentation, variableName);
+
+      if (locations.length === 0) {
+        continue;
+      }
+
       findings.push({
         type: "stale-env-var",
         documentationFile,
@@ -105,6 +112,7 @@ export function detectStaleEnvironmentVariables(
         message:
           `${documentationFile} references "${variableName}", ` +
           "but the current code no longer references that environment variable.",
+        locations,
       });
     }
   }

@@ -30023,6 +30023,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.detectStaleApiRoutes = detectStaleApiRoutes;
 const fs = __importStar(__nccwpck_require__(3024));
+const locator_1 = __nccwpck_require__(5464);
 const api_routes_1 = __nccwpck_require__(3651);
 const git_file_1 = __nccwpck_require__(5631);
 const route_suggestions_1 = __nccwpck_require__(1050);
@@ -30085,12 +30086,17 @@ function detectStaleApiRoutes(changedFiles, baseSha, headSha, documentationFiles
             if (!documentationReferencesRoute(documentation, oldRoute)) {
                 continue;
             }
+            const locations = (0, locator_1.locateReference)(documentation, routeKey);
+            if (locations.length === 0) {
+                continue;
+            }
             findings.push({
                 type: "stale-api-route",
                 documentationFile,
                 reference: routeKey,
                 message: `${documentationFile} references "${routeKey}", but that API route ` +
                     "no longer exists in the current codebase.",
+                locations,
                 ...(replacement
                     ? {
                         suggestion: (0, route_suggestions_1.describeRoute)(replacement.route),
@@ -30147,6 +30153,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.detectStaleEnvironmentVariables = detectStaleEnvironmentVariables;
 const fs = __importStar(__nccwpck_require__(3024));
+const locator_1 = __nccwpck_require__(5464);
 const ENV_PATTERNS = [
     /process\.env\.([A-Z][A-Z0-9_]*)/g,
     /process\.env\[\s*["']([A-Z][A-Z0-9_]*)["']\s*\]/g,
@@ -30208,12 +30215,17 @@ function detectStaleEnvironmentVariables(changedCodeFiles, currentCodeFiles, doc
             if (!documentationReferencesVariable(documentation, variableName)) {
                 continue;
             }
+            const locations = (0, locator_1.locateReference)(documentation, variableName);
+            if (locations.length === 0) {
+                continue;
+            }
             findings.push({
                 type: "stale-env-var",
                 documentationFile,
                 reference: variableName,
                 message: `${documentationFile} references "${variableName}", ` +
                     "but the current code no longer references that environment variable.",
+                locations,
             });
         }
     }
@@ -30264,6 +30276,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.detectStalePackageScripts = detectStalePackageScripts;
 const fs = __importStar(__nccwpck_require__(3024));
+const locator_1 = __nccwpck_require__(5464);
 function escapeRegExp(value) {
     return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -30307,12 +30320,17 @@ function detectStalePackageScripts(changedLines, documentationFiles) {
             if (!referencePattern.test(documentation)) {
                 continue;
             }
+            const locations = (0, locator_1.locateReference)(documentation, reference);
+            if (locations.length === 0) {
+                continue;
+            }
             findings.push({
                 type: "stale-package-script",
                 documentationFile,
                 reference,
                 message: `${documentationFile} references "${reference}", ` +
                     `but package.json no longer defines the "${scriptName}" script.`,
+                locations,
             });
         }
     }
@@ -30452,6 +30470,54 @@ function extractChangedLines(patch) {
 
 /***/ }),
 
+/***/ 5464:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.locateReference = locateReference;
+function parseHeading(line) {
+    const match = line.match(/^(#{1,6})\s+(.+?)\s*$/);
+    const marker = match?.[1];
+    const text = match?.[2];
+    if (!marker || !text) {
+        return null;
+    }
+    return {
+        level: marker.length,
+        text: text.replace(/\s+#+\s*$/, ""),
+    };
+}
+function locateReference(documentation, reference) {
+    const lines = documentation.split(/\r?\n/);
+    const locations = [];
+    const headingStack = [];
+    for (let index = 0; index < lines.length; index++) {
+        const line = lines[index];
+        if (line === undefined) {
+            continue;
+        }
+        const heading = parseHeading(line);
+        if (heading) {
+            headingStack[heading.level - 1] = heading.text;
+            headingStack.length = heading.level;
+            continue;
+        }
+        if (!line.includes(reference)) {
+            continue;
+        }
+        locations.push({
+            line: index + 1,
+            section: headingStack.filter((heading) => Boolean(heading)),
+        });
+    }
+    return locations;
+}
+
+
+/***/ }),
+
 /***/ 7318:
 /***/ ((__unused_webpack_module, exports) => {
 
@@ -30471,6 +30537,14 @@ function buildReport(findings) {
         body += `### ${finding.documentationFile}\n`;
         body += `- **Problem:** ${finding.message}\n`;
         body += `- **Stale reference:** \`${finding.reference}\`\n`;
+        if (finding.locations && finding.locations.length > 0) {
+            for (const location of finding.locations) {
+                body += `- **Line:** ${location.line}\n`;
+                if (location.section.length > 0) {
+                    body += `- **Section:** ${location.section.join(" → ")}\n`;
+                }
+            }
+        }
         if (finding.suggestion) {
             body += `- **Possible replacement:** \`${finding.suggestion}\`\n`;
         }
