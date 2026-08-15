@@ -5,6 +5,10 @@ import {
 } from "../documentation/sections";
 import { readFileAtRef } from "../repository/git-file";
 import { findCandidateSections } from "../semantic/candidates";
+import {
+  extractEnclosingSymbols,
+  splitIdentifier,
+} from "../semantic/enclosing-symbols";
 import { extractChangedIdentifiers } from "../semantic/identifiers";
 import type { SemanticProvider } from "../semantic/provider";
 import type { DocumentationFinding } from "../types/finding";
@@ -36,6 +40,7 @@ export function discoverSemanticCandidates(
   enabled: boolean,
   changedCodeFiles: ChangedCodeFile[],
   documentationFiles: string[],
+  baseSha: string,
   headSha: string,
 ): SemanticCandidate[] {
   if (!enabled) {
@@ -59,7 +64,23 @@ export function discoverSemanticCandidates(
   }
 
   for (const file of changedCodeFiles) {
-    const identifiers = extractChangedIdentifiers(file.changedLines);
+    const codeBefore = readFileAtRef(baseSha, file.filename) ?? "";
+    const codeAfter = readFileAtRef(headSha, file.filename) ?? "";
+    const rawIdentifiers = extractChangedIdentifiers(file.changedLines);
+    const enclosingSymbols = extractEnclosingSymbols(
+      file.changedLines,
+      file.filename,
+      codeBefore,
+      codeAfter,
+    );
+    const identifiers = [
+      ...new Set(
+        [...rawIdentifiers, ...enclosingSymbols].flatMap((identifier) => [
+          identifier,
+          splitIdentifier(identifier),
+        ]),
+      ),
+    ];
 
     if (identifiers.length === 0) {
       continue;

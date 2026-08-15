@@ -195,6 +195,7 @@ async function run() {
         true,
         changedCodeForAnalysis,
         trackedDocumentationFiles,
+        baseSha,
         headSha,
       );
 
