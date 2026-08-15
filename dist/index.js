@@ -29982,6 +29982,102 @@ function classifyFile(filename) {
 
 /***/ }),
 
+/***/ 2630:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.detectStalePackageScripts = detectStalePackageScripts;
+const fs = __importStar(__nccwpck_require__(3024));
+function extractRemovedScriptNames(changedLines) {
+    const removedScripts = [];
+    for (const line of changedLines) {
+        if (line.type !== "removed") {
+            continue;
+        }
+        const match = line.content.match(/^\s*"([^"]+)"\s*:\s*"[^"]*"\s*,?\s*$/);
+        if (!match) {
+            continue;
+        }
+        const scriptName = match[1];
+        if (!scriptName) {
+            continue;
+        }
+        removedScripts.push(scriptName);
+    }
+    return removedScripts;
+}
+function detectStalePackageScripts(changedLines, documentationFiles) {
+    const findings = [];
+    if (!fs.existsSync("package.json")) {
+        return findings;
+    }
+    const packageJson = JSON.parse(fs.readFileSync("package.json", "utf8"));
+    const currentScripts = packageJson.scripts ?? {};
+    const removedScripts = extractRemovedScriptNames(changedLines);
+    for (const scriptName of removedScripts) {
+        if (scriptName in currentScripts) {
+            continue;
+        }
+        const reference = `npm run ${scriptName}`;
+        for (const documentationFile of documentationFiles) {
+            if (!fs.existsSync(documentationFile)) {
+                continue;
+            }
+            const documentation = fs.readFileSync(documentationFile, "utf8");
+            if (!documentation.includes(reference)) {
+                continue;
+            }
+            findings.push({
+                type: "stale-package-script",
+                documentationFile,
+                scriptName,
+                reference,
+                message: `${documentationFile} references "${reference}", ` +
+                    `but package.json no longer defines the "${scriptName}" script.`,
+            });
+        }
+    }
+    return findings;
+}
+
+
+/***/ }),
+
 /***/ 9952:
 /***/ ((__unused_webpack_module, exports) => {
 
@@ -30059,6 +30155,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 const core = __importStar(__nccwpck_require__(7484));
 const github = __importStar(__nccwpck_require__(3228));
 const classify_1 = __nccwpck_require__(3813);
+const package_scripts_1 = __nccwpck_require__(2630);
 const diff_1 = __nccwpck_require__(9952);
 async function run() {
     try {
@@ -30110,6 +30207,28 @@ async function run() {
                 if (line.type === "removed") {
                     core.info(`- ${line.content}`);
                 }
+            }
+        }
+        const packageJsonFile = files.find((file) => file.filename === "package.json");
+        const findings = [];
+        if (packageJsonFile) {
+            const packageChanges = (0, diff_1.extractChangedLines)(packageJsonFile.patch);
+            const packageScriptFindings = (0, package_scripts_1.detectStalePackageScripts)(packageChanges, [
+                "README.md",
+            ]);
+            findings.push(...packageScriptFindings);
+        }
+        core.info("");
+        core.info("🔎 Documentation Drift Analysis");
+        if (findings.length === 0) {
+            core.info("✅ No documentation drift detected.");
+        }
+        else {
+            core.warning(`${findings.length} documentation issue(s) detected.`);
+            for (const finding of findings) {
+                core.warning("");
+                core.warning(`⚠️ ${finding.documentationFile}`);
+                core.warning(finding.message);
             }
         }
     }
@@ -30241,6 +30360,14 @@ module.exports = require("node:crypto");
 
 "use strict";
 module.exports = require("node:events");
+
+/***/ }),
+
+/***/ 3024:
+/***/ ((module) => {
+
+"use strict";
+module.exports = require("node:fs");
 
 /***/ }),
 

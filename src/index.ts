@@ -1,6 +1,7 @@
 import * as core from "@actions/core";
 import * as github from "@actions/github";
 import { classifyFile } from "./classify";
+import { detectStalePackageScripts } from "./detectors/package-scripts";
 import { extractChangedLines } from "./diff";
 
 async function run() {
@@ -79,6 +80,37 @@ async function run() {
         if (line.type === "removed") {
           core.info(`- ${line.content}`);
         }
+      }
+    }
+
+    const packageJsonFile = files.find(
+      (file) => file.filename === "package.json",
+    );
+
+    const findings = [];
+
+    if (packageJsonFile) {
+      const packageChanges = extractChangedLines(packageJsonFile.patch);
+
+      const packageScriptFindings = detectStalePackageScripts(packageChanges, [
+        "README.md",
+      ]);
+
+      findings.push(...packageScriptFindings);
+    }
+
+    core.info("");
+    core.info("🔎 Documentation Drift Analysis");
+
+    if (findings.length === 0) {
+      core.info("✅ No documentation drift detected.");
+    } else {
+      core.warning(`${findings.length} documentation issue(s) detected.`);
+
+      for (const finding of findings) {
+        core.warning("");
+        core.warning(`⚠️ ${finding.documentationFile}`);
+        core.warning(finding.message);
       }
     }
   } catch (error) {
