@@ -29922,6 +29922,41 @@ function wrappy (fn, cb) {
 
 /***/ }),
 
+/***/ 9952:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.extractChangedLines = extractChangedLines;
+function extractChangedLines(patch) {
+    if (!patch) {
+        return [];
+    }
+    const changedLines = [];
+    for (const line of patch.split("\n")) {
+        if (line.startsWith("+++") || line.startsWith("---")) {
+            continue;
+        }
+        if (line.startsWith("+")) {
+            changedLines.push({
+                type: "added",
+                content: line.slice(1),
+            });
+        }
+        if (line.startsWith("-")) {
+            changedLines.push({
+                type: "removed",
+                content: line.slice(1),
+            });
+        }
+    }
+    return changedLines;
+}
+
+
+/***/ }),
+
 /***/ 9407:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -29963,6 +29998,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 const core = __importStar(__nccwpck_require__(7484));
 const github = __importStar(__nccwpck_require__(3228));
+const diff_1 = __nccwpck_require__(9952);
 async function run() {
     try {
         core.info("🚀 DocDrift is running inside GitHub!");
@@ -29986,7 +30022,22 @@ async function run() {
         });
         core.info(`Changed files: ${files.length}`);
         for (const file of files) {
-            core.info(`${file.status.toUpperCase()} - ${file.filename}`);
+            core.info("");
+            core.info(`📄 ${file.filename}`);
+            core.info(`Status: ${file.status}`);
+            const changedLines = (0, diff_1.extractChangedLines)(file.patch);
+            if (changedLines.length === 0) {
+                core.info("No readable text changes.");
+                continue;
+            }
+            for (const line of changedLines) {
+                if (line.type === "added") {
+                    core.info(`+ ${line.content}`);
+                }
+                if (line.type === "removed") {
+                    core.info(`- ${line.content}`);
+                }
+            }
         }
     }
     catch (error) {

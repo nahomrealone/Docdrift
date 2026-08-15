@@ -1,5 +1,6 @@
 import * as core from "@actions/core";
 import * as github from "@actions/github";
+import { extractChangedLines } from "./diff";
 
 async function run() {
   try {
@@ -34,7 +35,26 @@ async function run() {
     core.info(`Changed files: ${files.length}`);
 
     for (const file of files) {
-      core.info(`${file.status.toUpperCase()} - ${file.filename}`);
+      core.info("");
+      core.info(`📄 ${file.filename}`);
+      core.info(`Status: ${file.status}`);
+
+      const changedLines = extractChangedLines(file.patch);
+
+      if (changedLines.length === 0) {
+        core.info("No readable text changes.");
+        continue;
+      }
+
+      for (const line of changedLines) {
+        if (line.type === "added") {
+          core.info(`+ ${line.content}`);
+        }
+
+        if (line.type === "removed") {
+          core.info(`- ${line.content}`);
+        }
+      }
     }
   } catch (error) {
     if (error instanceof Error) {
