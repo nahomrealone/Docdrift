@@ -30519,14 +30519,15 @@ function locateReference(documentation, reference) {
 /***/ }),
 
 /***/ 7318:
-/***/ ((__unused_webpack_module, exports) => {
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.publishDocDriftComment = publishDocDriftComment;
+const file_link_1 = __nccwpck_require__(5766);
 const COMMENT_MARKER = "<!-- docdrift-report -->";
-function buildReport(findings) {
+function buildReport(findings, owner, repo, context) {
     let body = `${COMMENT_MARKER}\n## 📚 DocDrift Report\n\n`;
     if (findings.length === 0) {
         body += "✅ No documentation drift detected.";
@@ -30539,7 +30540,17 @@ function buildReport(findings) {
         body += `- **Stale reference:** \`${finding.reference}\`\n`;
         if (finding.locations && finding.locations.length > 0) {
             for (const location of finding.locations) {
-                body += `- **Line:** ${location.line}\n`;
+                const lineUrl = (0, file_link_1.buildGitHubFileLineUrl)({
+                    serverUrl: context.serverUrl,
+                    owner,
+                    repo,
+                    sha: context.headSha,
+                    filename: finding.documentationFile,
+                    line: location.line,
+                });
+                body +=
+                    `- **Location:** ` +
+                        `[${finding.documentationFile}:${location.line}](${lineUrl})\n`;
                 if (location.section.length > 0) {
                     body += `- **Section:** ${location.section.join(" → ")}\n`;
                 }
@@ -30555,8 +30566,8 @@ function buildReport(findings) {
     }
     return body;
 }
-async function publishDocDriftComment(octokit, owner, repo, pullNumber, findings) {
-    const body = buildReport(findings);
+async function publishDocDriftComment(octokit, owner, repo, pullNumber, findings, context) {
+    const body = buildReport(findings, owner, repo, context);
     const comments = await octokit.paginate(octokit.rest.issues.listComments, {
         owner,
         repo,
@@ -30580,6 +30591,26 @@ async function publishDocDriftComment(octokit, owner, repo, pullNumber, findings
         issue_number: pullNumber,
         body,
     });
+}
+
+
+/***/ }),
+
+/***/ 5766:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.buildGitHubFileLineUrl = buildGitHubFileLineUrl;
+function buildGitHubFileLineUrl({ serverUrl, owner, repo, sha, filename, line, }) {
+    const encodedPath = filename
+        .split("/")
+        .map(encodeURIComponent)
+        .join("/");
+    return (`${serverUrl}/${owner}/${repo}/blob/` +
+        `${sha}/${encodedPath}` +
+        `?plain=1#L${line}`);
 }
 
 
@@ -30648,6 +30679,7 @@ async function run() {
         const pullNumber = pullRequest.number;
         const baseSha = pullRequest.base.sha;
         const headSha = pullRequest.head.sha;
+        const serverUrl = github.context.serverUrl;
         core.info(`Repository: ${owner}/${repo}`);
         core.info(`Pull Request: #${pullNumber}`);
         const files = await octokit.paginate(octokit.rest.pulls.listFiles, {
@@ -30717,7 +30749,10 @@ async function run() {
                 core.warning(finding.message);
             }
         }
-        await (0, comment_1.publishDocDriftComment)(octokit, owner, repo, pullNumber, findings);
+        await (0, comment_1.publishDocDriftComment)(octokit, owner, repo, pullNumber, findings, {
+            serverUrl,
+            headSha,
+        });
     }
     catch (error) {
         if (error instanceof Error) {

@@ -29,6 +29,7 @@ async function run() {
     const pullNumber = pullRequest.number;
     const baseSha = pullRequest.base.sha;
     const headSha = pullRequest.head.sha;
+    const serverUrl = github.context.serverUrl;
 
     core.info(`Repository: ${owner}/${repo}`);
     core.info(`Pull Request: #${pullNumber}`);
@@ -146,7 +147,10 @@ async function run() {
       }
     }
 
-    await publishDocDriftComment(octokit, owner, repo, pullNumber, findings);
+    await publishDocDriftComment(octokit, owner, repo, pullNumber, findings, {
+      serverUrl,
+      headSha,
+    });
   } catch (error) {
     if (error instanceof Error) {
       core.setFailed(error.message);

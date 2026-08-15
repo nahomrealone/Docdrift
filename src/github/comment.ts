@@ -1,10 +1,21 @@
 import type { GitHub } from "@actions/github/lib/utils";
 
 import type { DocumentationFinding } from "../types/finding";
+import { buildGitHubFileLineUrl } from "./file-link";
 
 const COMMENT_MARKER = "<!-- docdrift-report -->";
 
-function buildReport(findings: DocumentationFinding[]): string {
+interface ReportContext {
+  serverUrl: string;
+  headSha: string;
+}
+
+function buildReport(
+  findings: DocumentationFinding[],
+  owner: string,
+  repo: string,
+  context: ReportContext,
+): string {
   let body = `${COMMENT_MARKER}\n## 📚 DocDrift Report\n\n`;
 
   if (findings.length === 0) {
@@ -21,7 +32,18 @@ function buildReport(findings: DocumentationFinding[]): string {
 
     if (finding.locations && finding.locations.length > 0) {
       for (const location of finding.locations) {
-        body += `- **Line:** ${location.line}\n`;
+        const lineUrl = buildGitHubFileLineUrl({
+          serverUrl: context.serverUrl,
+          owner,
+          repo,
+          sha: context.headSha,
+          filename: finding.documentationFile,
+          line: location.line,
+        });
+
+        body +=
+          `- **Location:** ` +
+          `[${finding.documentationFile}:${location.line}](${lineUrl})\n`;
 
         if (location.section.length > 0) {
           body += `- **Section:** ${location.section.join(" → ")}\n`;
@@ -49,8 +71,9 @@ export async function publishDocDriftComment(
   repo: string,
   pullNumber: number,
   findings: DocumentationFinding[],
+  context: ReportContext,
 ) {
-  const body = buildReport(findings);
+  const body = buildReport(findings, owner, repo, context);
 
   const comments = await octokit.paginate(octokit.rest.issues.listComments, {
     owner,
