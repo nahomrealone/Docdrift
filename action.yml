@@ -1,0 +1,6 @@
+name: "DocDrift"
+description: "Detect documentation that becomes outdated when code changes"
+
+runs:
+  using: "node24"
+  main: "dist/index.js"
