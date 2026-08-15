@@ -1,6 +1,7 @@
 import * as core from "@actions/core";
 import * as github from "@actions/github";
 import { classifyFile } from "./classify";
+import { loadConfig } from "./config/load";
 import { detectStaleApiRoutes } from "./detectors/api-routes";
 import { detectStaleEnvironmentVariables } from "./detectors/env-vars";
 import { detectStalePackageScripts } from "./detectors/package-scripts";
@@ -15,6 +16,11 @@ async function run() {
     const token = core.getInput("github-token", {
       required: true,
     });
+
+    const configPath = core.getInput("config-path") || ".docdrift.yml";
+    const config = loadConfig(configPath);
+
+    core.info(`DocDrift mode: ${config.mode}`);
 
     const octokit = github.getOctokit(token);
 
@@ -104,7 +110,7 @@ async function run() {
 
     const findings = [];
 
-    if (packageJsonFile) {
+    if (config.detectors.packageScripts && packageJsonFile) {
       const packageChanges = extractChangedLines(packageJsonFile.patch);
 
       const packageScriptFindings = detectStalePackageScripts(
@@ -115,22 +121,26 @@ async function run() {
       findings.push(...packageScriptFindings);
     }
 
-    const environmentFindings = detectStaleEnvironmentVariables(
-      changedCodeForAnalysis,
-      currentCodeFiles,
-      trackedDocumentationFiles,
-    );
+    if (config.detectors.envVars) {
+      const environmentFindings = detectStaleEnvironmentVariables(
+        changedCodeForAnalysis,
+        currentCodeFiles,
+        trackedDocumentationFiles,
+      );
 
-    findings.push(...environmentFindings);
+      findings.push(...environmentFindings);
+    }
 
-    const apiRouteFindings = detectStaleApiRoutes(
-      codeFiles,
-      baseSha,
-      headSha,
-      trackedDocumentationFiles,
-    );
+    if (config.detectors.apiRoutes) {
+      const apiRouteFindings = detectStaleApiRoutes(
+        codeFiles,
+        baseSha,
+        headSha,
+        trackedDocumentationFiles,
+      );
 
-    findings.push(...apiRouteFindings);
+      findings.push(...apiRouteFindings);
+    }
 
     core.info("");
     core.info("🔎 Documentation Drift Analysis");
@@ -151,6 +161,12 @@ async function run() {
       serverUrl,
       headSha,
     });
+
+    if (config.mode === "enforce" && findings.length > 0) {
+      core.setFailed(
+        `DocDrift detected ${findings.length} stale documentation issue(s).`,
+      );
+    }
   } catch (error) {
     if (error instanceof Error) {
       core.setFailed(error.message);
