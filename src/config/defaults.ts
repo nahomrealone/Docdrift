@@ -7,6 +7,7 @@ export const DEFAULT_CONFIG: DocDriftConfig = {
     packageScripts: true,
     envVars: true,
     apiRoutes: true,
+    semantic: false,
   },
   paths: {
     documentation: {
@@ -14,5 +15,8 @@ export const DEFAULT_CONFIG: DocDriftConfig = {
       exclude: [],
     },
     ignore: [],
+  },
+  semantic: {
+    confidenceThreshold: 0.8,
   },
 };

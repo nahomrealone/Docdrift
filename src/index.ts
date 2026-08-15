@@ -6,6 +6,7 @@ import { parseConfig } from "./config/load";
 import { detectStaleApiRoutes } from "./detectors/api-routes";
 import { detectStaleEnvironmentVariables } from "./detectors/env-vars";
 import { detectStalePackageScripts } from "./detectors/package-scripts";
+import { discoverSemanticCandidates } from "./detectors/semantic";
 import { extractChangedLines } from "./diff";
 import { publishDocDriftComment } from "./github/comment";
 import { isDocumentationPath, isIgnoredPath } from "./paths/matcher";
@@ -157,6 +158,31 @@ async function run() {
       );
 
       findings.push(...apiRouteFindings);
+    }
+
+    const semanticCandidates = discoverSemanticCandidates(
+      config.detectors.semantic,
+      changedCodeForAnalysis,
+      trackedDocumentationFiles,
+    );
+
+    if (config.detectors.semantic) {
+      core.info("");
+      core.info("🧠 Semantic candidates");
+
+      if (semanticCandidates.length === 0) {
+        core.info("No relevant documentation sections found.");
+      }
+
+      for (const candidate of semanticCandidates) {
+        core.info("");
+        core.info(`Changed: ${candidate.filename}`);
+        core.info(`Identifiers: ${candidate.identifiers.join(", ")}`);
+        core.info(
+          `Matched: ${candidate.documentationFile} → ${candidate.section.heading} ` +
+            `(lines ${candidate.section.startLine}-${candidate.section.endLine})`,
+        );
+      }
     }
 
     core.info("");

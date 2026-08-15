@@ -6,6 +6,10 @@ detectors:
   packageScripts: true
   envVars: true
   apiRoutes: true
+  semantic: false
+
+semantic:
+  confidenceThreshold: 0.80
 
 paths:
   documentation:

@@ -29996,6 +29996,7 @@ exports.DEFAULT_CONFIG = {
         packageScripts: true,
         envVars: true,
         apiRoutes: true,
+        semantic: false,
     },
     paths: {
         documentation: {
@@ -30003,6 +30004,9 @@ exports.DEFAULT_CONFIG = {
             exclude: [],
         },
         ignore: [],
+    },
+    semantic: {
+        confidenceThreshold: 0.8,
     },
 };
 
@@ -30070,6 +30074,11 @@ function parseConfig(raw) {
     if (parsed.mode !== undefined && !isMode(parsed.mode)) {
         throw new Error(`Invalid DocDrift mode: ${parsed.mode}`);
     }
+    const confidence = parsed.semantic?.confidenceThreshold;
+    if (confidence !== undefined &&
+        (typeof confidence !== "number" || confidence < 0 || confidence > 1)) {
+        throw new Error("semantic.confidenceThreshold must be between 0 and 1");
+    }
     return {
         version: 1,
         mode: parsed.mode ?? defaults_1.DEFAULT_CONFIG.mode,
@@ -30078,6 +30087,7 @@ function parseConfig(raw) {
                 defaults_1.DEFAULT_CONFIG.detectors.packageScripts,
             envVars: parsed.detectors?.envVars ?? defaults_1.DEFAULT_CONFIG.detectors.envVars,
             apiRoutes: parsed.detectors?.apiRoutes ?? defaults_1.DEFAULT_CONFIG.detectors.apiRoutes,
+            semantic: parsed.detectors?.semantic ?? defaults_1.DEFAULT_CONFIG.detectors.semantic,
         },
         paths: {
             documentation: {
@@ -30087,6 +30097,9 @@ function parseConfig(raw) {
                     defaults_1.DEFAULT_CONFIG.paths.documentation.exclude,
             },
             ignore: parsed.paths?.ignore ?? defaults_1.DEFAULT_CONFIG.paths.ignore,
+        },
+        semantic: {
+            confidenceThreshold: confidence ?? defaults_1.DEFAULT_CONFIG.semantic.confidenceThreshold,
         },
     };
 }
@@ -30550,6 +30563,86 @@ function describeRoute(route) {
 
 /***/ }),
 
+/***/ 295:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.discoverSemanticCandidates = discoverSemanticCandidates;
+const fs = __importStar(__nccwpck_require__(3024));
+const sections_1 = __nccwpck_require__(6192);
+const candidates_1 = __nccwpck_require__(2920);
+const identifiers_1 = __nccwpck_require__(724);
+function discoverSemanticCandidates(enabled, changedCodeFiles, documentationFiles) {
+    if (!enabled) {
+        return [];
+    }
+    const candidates = [];
+    const documentationSections = new Map();
+    for (const documentationFile of documentationFiles) {
+        if (!fs.existsSync(documentationFile)) {
+            continue;
+        }
+        const markdown = fs.readFileSync(documentationFile, "utf8");
+        documentationSections.set(documentationFile, (0, sections_1.parseMarkdownSections)(markdown));
+    }
+    for (const file of changedCodeFiles) {
+        const identifiers = (0, identifiers_1.extractChangedIdentifiers)(file.changedLines);
+        if (identifiers.length === 0) {
+            continue;
+        }
+        for (const [documentationFile, sections] of documentationSections) {
+            const matchingSections = (0, candidates_1.findCandidateSections)(sections, identifiers);
+            for (const section of matchingSections) {
+                candidates.push({
+                    filename: file.filename,
+                    identifiers,
+                    documentationFile,
+                    section,
+                });
+            }
+        }
+    }
+    return candidates;
+}
+
+
+/***/ }),
+
 /***/ 9952:
 /***/ ((__unused_webpack_module, exports) => {
 
@@ -30628,6 +30721,53 @@ function locateReference(documentation, reference) {
         });
     }
     return locations;
+}
+
+
+/***/ }),
+
+/***/ 6192:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.parseMarkdownSections = parseMarkdownSections;
+function parseMarkdownSections(markdown) {
+    const lines = markdown.split(/\r?\n/);
+    const sections = [];
+    let current = null;
+    for (let index = 0; index < lines.length; index++) {
+        const line = lines[index];
+        if (line === undefined) {
+            continue;
+        }
+        const heading = line.match(/^(#{1,6})\s+(.+?)\s*$/);
+        const marker = heading?.[1];
+        const text = heading?.[2];
+        if (!marker || !text) {
+            continue;
+        }
+        if (current) {
+            current.endLine = index;
+            current.content = lines
+                .slice(current.startLine - 1, current.endLine)
+                .join("\n");
+            sections.push(current);
+        }
+        current = {
+            heading: text.replace(/\s+#+\s*$/, ""),
+            level: marker.length,
+            startLine: index + 1,
+            endLine: lines.length,
+            content: "",
+        };
+    }
+    if (current) {
+        current.content = lines.slice(current.startLine - 1).join("\n");
+        sections.push(current);
+    }
+    return sections;
 }
 
 
@@ -30778,6 +30918,7 @@ const load_1 = __nccwpck_require__(1036);
 const api_routes_1 = __nccwpck_require__(5566);
 const env_vars_1 = __nccwpck_require__(5307);
 const package_scripts_1 = __nccwpck_require__(2630);
+const semantic_1 = __nccwpck_require__(295);
 const diff_1 = __nccwpck_require__(9952);
 const comment_1 = __nccwpck_require__(7318);
 const matcher_1 = __nccwpck_require__(4706);
@@ -30865,6 +31006,21 @@ async function run() {
         if (config.detectors.apiRoutes) {
             const apiRouteFindings = (0, api_routes_1.detectStaleApiRoutes)(analyzableCodeFiles, baseSha, headSha, trackedDocumentationFiles, config.paths);
             findings.push(...apiRouteFindings);
+        }
+        const semanticCandidates = (0, semantic_1.discoverSemanticCandidates)(config.detectors.semantic, changedCodeForAnalysis, trackedDocumentationFiles);
+        if (config.detectors.semantic) {
+            core.info("");
+            core.info("🧠 Semantic candidates");
+            if (semanticCandidates.length === 0) {
+                core.info("No relevant documentation sections found.");
+            }
+            for (const candidate of semanticCandidates) {
+                core.info("");
+                core.info(`Changed: ${candidate.filename}`);
+                core.info(`Identifiers: ${candidate.identifiers.join(", ")}`);
+                core.info(`Matched: ${candidate.documentationFile} → ${candidate.section.heading} ` +
+                    `(lines ${candidate.section.startLine}-${candidate.section.endLine})`);
+            }
         }
         core.info("");
         core.info("🔎 Documentation Drift Analysis");
@@ -31095,6 +31251,72 @@ function listTrackedFiles(category) {
         return files;
     }
     return files.filter((file) => (0, classify_1.classifyFile)(file) === category);
+}
+
+
+/***/ }),
+
+/***/ 2920:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.findCandidateSections = findCandidateSections;
+function findCandidateSections(sections, identifiers) {
+    return sections.filter((section) => {
+        const haystack = `${section.heading}\n${section.content}`.toLowerCase();
+        return identifiers.some((identifier) => haystack.includes(identifier.toLowerCase()));
+    });
+}
+
+
+/***/ }),
+
+/***/ 724:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.extractChangedIdentifiers = extractChangedIdentifiers;
+const IDENTIFIER_PATTERN = /\b[A-Za-z_$][A-Za-z0-9_$]*\b/g;
+const IGNORED_IDENTIFIERS = new Set([
+    "const",
+    "let",
+    "var",
+    "function",
+    "return",
+    "async",
+    "await",
+    "export",
+    "import",
+    "from",
+    "if",
+    "else",
+    "true",
+    "false",
+    "null",
+    "undefined",
+    "string",
+    "number",
+    "boolean",
+]);
+function extractChangedIdentifiers(lines) {
+    const identifiers = new Set();
+    for (const line of lines) {
+        const matches = line.content.match(IDENTIFIER_PATTERN);
+        if (!matches) {
+            continue;
+        }
+        for (const identifier of matches) {
+            if (identifier.length < 3 || IGNORED_IDENTIFIERS.has(identifier)) {
+                continue;
+            }
+            identifiers.add(identifier);
+        }
+    }
+    return [...identifiers];
 }
 
 
