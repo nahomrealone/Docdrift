@@ -10,6 +10,10 @@ export interface DocumentationFinding {
   message: string;
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function extractRemovedScriptNames(changedLines: ChangedLine[]): string[] {
   const removedScripts: string[] = [];
 
@@ -68,7 +72,12 @@ export function detectStalePackageScripts(
 
       const documentation = fs.readFileSync(documentationFile, "utf8");
 
-      if (!documentation.includes(reference)) {
+      const referencePattern = new RegExp(
+        `(^|[^A-Za-z0-9:_-])${escapeRegExp(reference)}(?![A-Za-z0-9:_-])`,
+        "m",
+      );
+
+      if (!referencePattern.test(documentation)) {
         continue;
       }
 

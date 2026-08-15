@@ -30023,6 +30023,9 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.detectStalePackageScripts = detectStalePackageScripts;
 const fs = __importStar(__nccwpck_require__(3024));
+function escapeRegExp(value) {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 function extractRemovedScriptNames(changedLines) {
     const removedScripts = [];
     for (const line of changedLines) {
@@ -30059,7 +30062,8 @@ function detectStalePackageScripts(changedLines, documentationFiles) {
                 continue;
             }
             const documentation = fs.readFileSync(documentationFile, "utf8");
-            if (!documentation.includes(reference)) {
+            const referencePattern = new RegExp(`(^|[^A-Za-z0-9:_-])${escapeRegExp(reference)}(?![A-Za-z0-9:_-])`, "m");
+            if (!referencePattern.test(documentation)) {
                 continue;
             }
             findings.push({
