@@ -8,4 +8,11 @@ export const DEFAULT_CONFIG: DocDriftConfig = {
     envVars: true,
     apiRoutes: true,
   },
+  paths: {
+    documentation: {
+      include: ["*.md", "*.mdx", "**/*.md", "**/*.mdx"],
+      exclude: [],
+    },
+    ignore: [],
+  },
 };

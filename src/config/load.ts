@@ -14,7 +14,10 @@ export function loadConfig(configPath: string): DocDriftConfig {
     return DEFAULT_CONFIG;
   }
 
-  const raw = fs.readFileSync(configPath, "utf8");
+  return parseConfig(fs.readFileSync(configPath, "utf8"));
+}
+
+export function parseConfig(raw: string): DocDriftConfig {
   const parsed = parse(raw) ?? {};
 
   if (parsed.version !== undefined && parsed.version !== 1) {
@@ -35,6 +38,17 @@ export function loadConfig(configPath: string): DocDriftConfig {
       envVars: parsed.detectors?.envVars ?? DEFAULT_CONFIG.detectors.envVars,
       apiRoutes:
         parsed.detectors?.apiRoutes ?? DEFAULT_CONFIG.detectors.apiRoutes,
+    },
+    paths: {
+      documentation: {
+        include:
+          parsed.paths?.documentation?.include ??
+          DEFAULT_CONFIG.paths.documentation.include,
+        exclude:
+          parsed.paths?.documentation?.exclude ??
+          DEFAULT_CONFIG.paths.documentation.exclude,
+      },
+      ignore: parsed.paths?.ignore ?? DEFAULT_CONFIG.paths.ignore,
     },
   };
 }

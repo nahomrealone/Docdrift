@@ -1,12 +1,15 @@
 import * as core from "@actions/core";
 import * as github from "@actions/github";
 import { classifyFile } from "./classify";
-import { loadConfig } from "./config/load";
+import { DEFAULT_CONFIG } from "./config/defaults";
+import { parseConfig } from "./config/load";
 import { detectStaleApiRoutes } from "./detectors/api-routes";
 import { detectStaleEnvironmentVariables } from "./detectors/env-vars";
 import { detectStalePackageScripts } from "./detectors/package-scripts";
 import { extractChangedLines } from "./diff";
 import { publishDocDriftComment } from "./github/comment";
+import { isDocumentationPath, isIgnoredPath } from "./paths/matcher";
+import { readFileAtRef } from "./repository/git-file";
 import { listTrackedFiles } from "./repository/tracked-files";
 
 async function run() {
@@ -18,9 +21,6 @@ async function run() {
     });
 
     const configPath = core.getInput("config-path") || ".docdrift.yml";
-    const config = loadConfig(configPath);
-
-    core.info(`DocDrift mode: ${config.mode}`);
 
     const octokit = github.getOctokit(token);
 
@@ -36,6 +36,11 @@ async function run() {
     const baseSha = pullRequest.base.sha;
     const headSha = pullRequest.head.sha;
     const serverUrl = github.context.serverUrl;
+
+    const configContent = readFileAtRef(baseSha, configPath);
+    const config = configContent ? parseConfig(configContent) : DEFAULT_CONFIG;
+
+    core.info(`DocDrift mode: ${config.mode}`);
 
     core.info(`Repository: ${owner}/${repo}`);
     core.info(`Pull Request: #${pullNumber}`);
@@ -61,10 +66,19 @@ async function run() {
       (file) => classifyFile(file.filename) === "ignored",
     );
 
-    const currentCodeFiles = listTrackedFiles("code");
-    const trackedDocumentationFiles = listTrackedFiles("documentation");
+    const analyzableCodeFiles = codeFiles.filter(
+      (file) => !isIgnoredPath(file.filename, config.paths),
+    );
 
-    const changedCodeForAnalysis = codeFiles.map((file) => ({
+    const currentCodeFiles = listTrackedFiles("code").filter(
+      (filename) => !isIgnoredPath(filename, config.paths),
+    );
+
+    const trackedDocumentationFiles = listTrackedFiles(
+      "documentation",
+    ).filter((filename) => isDocumentationPath(filename, config.paths));
+
+    const changedCodeForAnalysis = analyzableCodeFiles.map((file) => ({
       filename: file.filename,
       changedLines: extractChangedLines(file.patch),
     }));
@@ -77,11 +91,13 @@ async function run() {
 
     for (const file of files) {
       const category = classifyFile(file.filename);
+      const configIgnored = isIgnoredPath(file.filename, config.paths);
+      const displayedCategory = configIgnored ? "ignored" : category;
 
       core.info("");
-      core.info(`📄 ${file.filename} [${category.toUpperCase()}]`);
+      core.info(`📄 ${file.filename} [${displayedCategory.toUpperCase()}]`);
 
-      if (category === "ignored") {
+      if (category === "ignored" || configIgnored) {
         core.info("Skipped.");
         continue;
       }
@@ -133,10 +149,11 @@ async function run() {
 
     if (config.detectors.apiRoutes) {
       const apiRouteFindings = detectStaleApiRoutes(
-        codeFiles,
+        analyzableCodeFiles,
         baseSha,
         headSha,
         trackedDocumentationFiles,
+        config.paths,
       );
 
       findings.push(...apiRouteFindings);

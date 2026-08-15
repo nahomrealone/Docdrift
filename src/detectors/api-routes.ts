@@ -2,7 +2,9 @@ import * as fs from "node:fs";
 
 import { locateReference } from "../documentation/locator";
 import { getRouteKey, parseApiRoutes } from "../parsers/api-routes";
+import { isIgnoredPath } from "../paths/matcher";
 import { listFilesAtRef, readFileAtRef } from "../repository/git-file";
+import type { PathConfig } from "../types/config";
 import type { DocumentationFinding } from "../types/finding";
 import type { RouteDefinition } from "../types/route";
 import { describeRoute, findRouteReplacement } from "./route-suggestions";
@@ -28,9 +30,11 @@ function isRouteSourceFile(filename: string): boolean {
   );
 }
 
-function buildRouteInventory(ref: string): RouteDefinition[] {
+function buildRouteInventory(ref: string, paths: PathConfig): RouteDefinition[] {
   const routes: RouteDefinition[] = [];
-  const files = listFilesAtRef(ref).filter(isRouteSourceFile);
+  const files = listFilesAtRef(ref)
+    .filter(isRouteSourceFile)
+    .filter((filename) => !isIgnoredPath(filename, paths));
 
   for (const filename of files) {
     const content = readFileAtRef(ref, filename);
@@ -63,6 +67,7 @@ export function detectStaleApiRoutes(
   baseSha: string,
   headSha: string,
   documentationFiles: string[],
+  paths: PathConfig,
 ): DocumentationFinding[] {
   const findings: DocumentationFinding[] = [];
 
@@ -70,8 +75,8 @@ export function detectStaleApiRoutes(
     return findings;
   }
 
-  const oldRoutes = buildRouteInventory(baseSha);
-  const currentRoutes = buildRouteInventory(headSha);
+  const oldRoutes = buildRouteInventory(baseSha, paths);
+  const currentRoutes = buildRouteInventory(headSha, paths);
   const oldRouteKeys = new Set(oldRoutes.map(getRouteKey));
   const currentRouteKeys = new Set(currentRoutes.map(getRouteKey));
   const addedRoutes = currentRoutes.filter(
