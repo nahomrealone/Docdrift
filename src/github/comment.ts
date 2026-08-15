@@ -1,6 +1,6 @@
 import type { GitHub } from "@actions/github/lib/utils";
 
-import type { DocumentationFinding } from "../detectors/package-scripts";
+import type { DocumentationFinding } from "../types/finding";
 
 const COMMENT_MARKER = "<!-- docdrift-report -->";
 

@@ -1,9 +1,11 @@
 import * as core from "@actions/core";
 import * as github from "@actions/github";
 import { classifyFile } from "./classify";
+import { detectStaleEnvironmentVariables } from "./detectors/env-vars";
 import { detectStalePackageScripts } from "./detectors/package-scripts";
 import { extractChangedLines } from "./diff";
 import { publishDocDriftComment } from "./github/comment";
+import { listTrackedFiles } from "./repository/tracked-files";
 
 async function run() {
   try {
@@ -49,6 +51,14 @@ async function run() {
       (file) => classifyFile(file.filename) === "ignored",
     );
 
+    const currentCodeFiles = listTrackedFiles("code");
+    const trackedDocumentationFiles = listTrackedFiles("documentation");
+
+    const changedCodeForAnalysis = codeFiles.map((file) => ({
+      filename: file.filename,
+      changedLines: extractChangedLines(file.patch),
+    }));
+
     core.info("");
     core.info("📊 DocDrift Classification");
     core.info(`Code files: ${codeFiles.length}`);
@@ -93,12 +103,21 @@ async function run() {
     if (packageJsonFile) {
       const packageChanges = extractChangedLines(packageJsonFile.patch);
 
-      const packageScriptFindings = detectStalePackageScripts(packageChanges, [
-        "README.md",
-      ]);
+      const packageScriptFindings = detectStalePackageScripts(
+        packageChanges,
+        trackedDocumentationFiles,
+      );
 
       findings.push(...packageScriptFindings);
     }
+
+    const environmentFindings = detectStaleEnvironmentVariables(
+      changedCodeForAnalysis,
+      currentCodeFiles,
+      trackedDocumentationFiles,
+    );
+
+    findings.push(...environmentFindings);
 
     core.info("");
     core.info("🔎 Documentation Drift Analysis");
