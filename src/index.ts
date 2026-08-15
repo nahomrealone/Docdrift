@@ -3,6 +3,7 @@ import * as github from "@actions/github";
 import { classifyFile } from "./classify";
 import { detectStalePackageScripts } from "./detectors/package-scripts";
 import { extractChangedLines } from "./diff";
+import { publishDocDriftComment } from "./github/comment";
 
 async function run() {
   try {
@@ -113,6 +114,8 @@ async function run() {
         core.warning(finding.message);
       }
     }
+
+    await publishDocDriftComment(octokit, owner, repo, pullNumber, findings);
   } catch (error) {
     if (error instanceof Error) {
       core.setFailed(error.message);

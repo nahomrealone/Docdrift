@@ -30113,6 +30113,38 @@ function extractChangedLines(patch) {
 
 /***/ }),
 
+/***/ 7318:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.publishDocDriftComment = publishDocDriftComment;
+const COMMENT_MARKER = "<!-- docdrift-report -->";
+async function publishDocDriftComment(octokit, owner, repo, pullNumber, findings) {
+    let body = `${COMMENT_MARKER}\n## 📚 DocDrift Report\n\n`;
+    if (findings.length === 0) {
+        body += "✅ No documentation drift detected.";
+    }
+    else {
+        body += `⚠️ Found **${findings.length} documentation issue(s)**.\n\n`;
+        for (const finding of findings) {
+            body += `### ${finding.documentationFile}\n`;
+            body += `- **Problem:** ${finding.message}\n`;
+            body += `- **Stale reference:** \`${finding.reference}\`\n\n`;
+        }
+    }
+    await octokit.rest.issues.createComment({
+        owner,
+        repo,
+        issue_number: pullNumber,
+        body,
+    });
+}
+
+
+/***/ }),
+
 /***/ 9407:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -30157,6 +30189,7 @@ const github = __importStar(__nccwpck_require__(3228));
 const classify_1 = __nccwpck_require__(3813);
 const package_scripts_1 = __nccwpck_require__(2630);
 const diff_1 = __nccwpck_require__(9952);
+const comment_1 = __nccwpck_require__(7318);
 async function run() {
     try {
         core.info("🚀 DocDrift is running inside GitHub!");
@@ -30231,6 +30264,7 @@ async function run() {
                 core.warning(finding.message);
             }
         }
+        await (0, comment_1.publishDocDriftComment)(octokit, owner, repo, pullNumber, findings);
     }
     catch (error) {
         if (error instanceof Error) {
