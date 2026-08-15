@@ -1,9 +1,12 @@
 export function createUser(
   email: string,
-  sendWelcomeEmail: boolean,
+  options: {
+    sendWelcomeEmail: boolean;
+    role: string;
+  },
 ) {
   return {
     email,
-    sendWelcomeEmail,
+    ...options,
   };
 }
