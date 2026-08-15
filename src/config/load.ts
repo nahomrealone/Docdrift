@@ -39,6 +39,15 @@ export function parseConfig(raw: string): DocDriftConfig {
     );
   }
 
+  if (
+    parsed.semantic?.provider !== undefined &&
+    parsed.semantic.provider !== "gemini"
+  ) {
+    throw new Error(
+      `Unsupported semantic provider: ${parsed.semantic.provider}`,
+    );
+  }
+
   return {
     version: 1,
     mode: parsed.mode ?? DEFAULT_CONFIG.mode,
@@ -66,6 +75,9 @@ export function parseConfig(raw: string): DocDriftConfig {
     semantic: {
       confidenceThreshold:
         confidence ?? DEFAULT_CONFIG.semantic.confidenceThreshold,
+      provider:
+        parsed.semantic?.provider ?? DEFAULT_CONFIG.semantic.provider,
+      model: parsed.semantic?.model ?? DEFAULT_CONFIG.semantic.model,
     },
   };
 }

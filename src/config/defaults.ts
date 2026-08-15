@@ -18,5 +18,7 @@ export const DEFAULT_CONFIG: DocDriftConfig = {
   },
   semantic: {
     confidenceThreshold: 0.8,
+    provider: "gemini",
+    model: "gemini-3.6-flash",
   },
 };

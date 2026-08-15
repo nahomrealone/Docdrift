@@ -7,6 +7,8 @@ export interface DetectorConfig {
 }
 export interface SemanticConfig {
     confidenceThreshold: number;
+    provider: "gemini";
+    model: string;
 }
 export interface DocumentationPathConfig {
     include: string[];

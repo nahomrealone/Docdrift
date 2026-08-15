@@ -10,6 +10,8 @@ detectors:
 
 semantic:
   confidenceThreshold: 0.80
+  provider: gemini
+  model: gemini-3.6-flash
 
 paths:
   documentation:
