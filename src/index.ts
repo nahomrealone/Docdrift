@@ -13,8 +13,7 @@ import {
 import { extractChangedLines } from "./diff";
 import { publishDocDriftComment } from "./github/comment";
 import { isDocumentationPath, isIgnoredPath } from "./paths/matcher";
-import { readFileAtRef } from "./repository/git-file";
-import { listTrackedFiles } from "./repository/tracked-files";
+import { listFilesAtRef, readFileAtRef } from "./repository/git-file";
 import { createSemanticProvider } from "./semantic/provider-factory";
 import type { DocumentationFinding } from "./types/finding";
 
@@ -87,13 +86,19 @@ async function run() {
       (file) => !isIgnoredPath(file.filename, config.paths),
     );
 
-    const currentCodeFiles = listTrackedFiles("code").filter(
-      (filename) => !isIgnoredPath(filename, config.paths),
+    const headFiles = listFilesAtRef(headSha);
+
+    const currentCodeFiles = headFiles.filter(
+      (filename) =>
+        classifyFile(filename) === "code" &&
+        !isIgnoredPath(filename, config.paths),
     );
 
-    const trackedDocumentationFiles = listTrackedFiles(
-      "documentation",
-    ).filter((filename) => isDocumentationPath(filename, config.paths));
+    const trackedDocumentationFiles = headFiles.filter(
+      (filename) =>
+        classifyFile(filename) === "documentation" &&
+        isDocumentationPath(filename, config.paths),
+    );
 
     const changedCodeForAnalysis = analyzableCodeFiles.map((file) => ({
       filename: file.filename,
@@ -190,6 +195,7 @@ async function run() {
         true,
         changedCodeForAnalysis,
         trackedDocumentationFiles,
+        headSha,
       );
 
       core.info("");

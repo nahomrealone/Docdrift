@@ -1,5 +1,3 @@
-import * as fs from "node:fs";
-
 import type { ChangedLine } from "../diff";
 import {
   parseMarkdownSections,
@@ -38,6 +36,7 @@ export function discoverSemanticCandidates(
   enabled: boolean,
   changedCodeFiles: ChangedCodeFile[],
   documentationFiles: string[],
+  headSha: string,
 ): SemanticCandidate[] {
   if (!enabled) {
     return [];
@@ -47,11 +46,12 @@ export function discoverSemanticCandidates(
   const documentationSections = new Map<string, MarkdownSection[]>();
 
   for (const documentationFile of documentationFiles) {
-    if (!fs.existsSync(documentationFile)) {
+    const markdown = readFileAtRef(headSha, documentationFile);
+
+    if (markdown === null) {
       continue;
     }
 
-    const markdown = fs.readFileSync(documentationFile, "utf8");
     documentationSections.set(
       documentationFile,
       parseMarkdownSections(markdown),

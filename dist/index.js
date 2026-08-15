@@ -50764,48 +50764,14 @@ function describeRoute(route) {
 /***/ }),
 
 /***/ 295:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
 
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.truncate = truncate;
 exports.discoverSemanticCandidates = discoverSemanticCandidates;
 exports.analyzeSemanticCandidates = analyzeSemanticCandidates;
-const fs = __importStar(__nccwpck_require__(3024));
 const sections_1 = __nccwpck_require__(6192);
 const git_file_1 = __nccwpck_require__(5631);
 const candidates_1 = __nccwpck_require__(2920);
@@ -50818,17 +50784,17 @@ function truncate(value, limit) {
     }
     return `${value.slice(0, limit)}\n...[truncated]`;
 }
-function discoverSemanticCandidates(enabled, changedCodeFiles, documentationFiles) {
+function discoverSemanticCandidates(enabled, changedCodeFiles, documentationFiles, headSha) {
     if (!enabled) {
         return [];
     }
     const candidates = [];
     const documentationSections = new Map();
     for (const documentationFile of documentationFiles) {
-        if (!fs.existsSync(documentationFile)) {
+        const markdown = (0, git_file_1.readFileAtRef)(headSha, documentationFile);
+        if (markdown === null) {
             continue;
         }
-        const markdown = fs.readFileSync(documentationFile, "utf8");
         documentationSections.set(documentationFile, (0, sections_1.parseMarkdownSections)(markdown));
     }
     for (const file of changedCodeFiles) {
@@ -51178,7 +51144,6 @@ const diff_1 = __nccwpck_require__(9952);
 const comment_1 = __nccwpck_require__(7318);
 const matcher_1 = __nccwpck_require__(4706);
 const git_file_1 = __nccwpck_require__(5631);
-const tracked_files_1 = __nccwpck_require__(7608);
 const provider_factory_1 = __nccwpck_require__(3312);
 function findingFingerprint(finding) {
     const line = finding.locations?.[0]?.line ?? 0;
@@ -51222,8 +51187,11 @@ async function run() {
         const documentationFiles = files.filter((file) => (0, classify_1.classifyFile)(file.filename) === "documentation");
         const ignoredFiles = files.filter((file) => (0, classify_1.classifyFile)(file.filename) === "ignored");
         const analyzableCodeFiles = codeFiles.filter((file) => !(0, matcher_1.isIgnoredPath)(file.filename, config.paths));
-        const currentCodeFiles = (0, tracked_files_1.listTrackedFiles)("code").filter((filename) => !(0, matcher_1.isIgnoredPath)(filename, config.paths));
-        const trackedDocumentationFiles = (0, tracked_files_1.listTrackedFiles)("documentation").filter((filename) => (0, matcher_1.isDocumentationPath)(filename, config.paths));
+        const headFiles = (0, git_file_1.listFilesAtRef)(headSha);
+        const currentCodeFiles = headFiles.filter((filename) => (0, classify_1.classifyFile)(filename) === "code" &&
+            !(0, matcher_1.isIgnoredPath)(filename, config.paths));
+        const trackedDocumentationFiles = headFiles.filter((filename) => (0, classify_1.classifyFile)(filename) === "documentation" &&
+            (0, matcher_1.isDocumentationPath)(filename, config.paths));
         const changedCodeForAnalysis = analyzableCodeFiles.map((file) => ({
             filename: file.filename,
             changedLines: (0, diff_1.extractChangedLines)(file.patch),
@@ -51278,7 +51246,7 @@ async function run() {
                 "available. Skipping semantic analysis.");
         }
         if (config.detectors.semantic && semanticProvider) {
-            const semanticCandidates = (0, semantic_1.discoverSemanticCandidates)(true, changedCodeForAnalysis, trackedDocumentationFiles);
+            const semanticCandidates = (0, semantic_1.discoverSemanticCandidates)(true, changedCodeForAnalysis, trackedDocumentationFiles, headSha);
             core.info("");
             core.info("🧠 Semantic candidates");
             if (semanticCandidates.length === 0) {
@@ -51510,29 +51478,6 @@ function listFilesAtRef(ref) {
     catch {
         return [];
     }
-}
-
-
-/***/ }),
-
-/***/ 7608:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.listTrackedFiles = listTrackedFiles;
-const node_child_process_1 = __nccwpck_require__(1421);
-const classify_1 = __nccwpck_require__(3813);
-function listTrackedFiles(category) {
-    const output = (0, node_child_process_1.execFileSync)("git", ["ls-files"], {
-        encoding: "utf8",
-    });
-    const files = output.split(/\r?\n/).filter(Boolean);
-    if (!category) {
-        return files;
-    }
-    return files.filter((file) => (0, classify_1.classifyFile)(file) === category);
 }
 
 
