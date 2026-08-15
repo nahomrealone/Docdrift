@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "dev": "tsx src/index.ts",
+    "develop": "tsx src/index.ts",
     "build": "ncc build src/index.ts -o dist"
   },
   "keywords": [],
@@ -18,7 +18,7 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "@actions/core": "^3.0.1",
-    "@actions/github": "^9.1.1"
+    "@actions/core": "^1.11.1",
+    "@actions/github": "^6.0.1"
   }
 }

@@ -3,6 +3,10 @@ name: DocDrift Test
 on:
   pull_request:
 
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   docdrift:
     runs-on: ubuntu-latest
@@ -13,3 +17,5 @@ jobs:
 
       - name: Run DocDrift
         uses: ./
+        with:
+          github-token: ${{ github.token }}

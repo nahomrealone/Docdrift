@@ -1,6 +1,11 @@
 name: "DocDrift"
 description: "Detect documentation that becomes outdated when code changes"
 
+inputs:
+  github-token:
+    description: "GitHub token used to read pull request information"
+    required: true
+
 runs:
   using: "node24"
   main: "dist/index.js"
