@@ -17,7 +17,17 @@ function buildReport(findings: DocumentationFinding[]): string {
   for (const finding of findings) {
     body += `### ${finding.documentationFile}\n`;
     body += `- **Problem:** ${finding.message}\n`;
-    body += `- **Stale reference:** \`${finding.reference}\`\n\n`;
+    body += `- **Stale reference:** \`${finding.reference}\`\n`;
+
+    if (finding.suggestion) {
+      body += `- **Possible replacement:** \`${finding.suggestion}\`\n`;
+    }
+
+    if (finding.confidence !== undefined) {
+      body += `- **Confidence:** ${Math.round(finding.confidence * 100)}%\n`;
+    }
+
+    body += "\n";
   }
 
   return body;

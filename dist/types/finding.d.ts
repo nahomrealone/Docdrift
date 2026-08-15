@@ -4,5 +4,7 @@ export interface DocumentationFinding {
     documentationFile: string;
     reference: string;
     message: string;
+    suggestion?: string;
+    confidence?: number;
 }
 //# sourceMappingURL=finding.d.ts.map

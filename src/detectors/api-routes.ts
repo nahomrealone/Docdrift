@@ -4,6 +4,7 @@ import { getRouteKey, parseApiRoutes } from "../parsers/api-routes";
 import { listFilesAtRef, readFileAtRef } from "../repository/git-file";
 import type { DocumentationFinding } from "../types/finding";
 import type { RouteDefinition } from "../types/route";
+import { describeRoute, findRouteReplacement } from "./route-suggestions";
 
 interface ChangedFile {
   filename: string;
@@ -70,7 +71,11 @@ export function detectStaleApiRoutes(
 
   const oldRoutes = buildRouteInventory(baseSha);
   const currentRoutes = buildRouteInventory(headSha);
+  const oldRouteKeys = new Set(oldRoutes.map(getRouteKey));
   const currentRouteKeys = new Set(currentRoutes.map(getRouteKey));
+  const addedRoutes = currentRoutes.filter(
+    (route) => !oldRouteKeys.has(getRouteKey(route)),
+  );
   const oldRoutesByKey = new Map<string, RouteDefinition>();
 
   for (const route of oldRoutes) {
@@ -85,6 +90,8 @@ export function detectStaleApiRoutes(
     if (currentRouteKeys.has(routeKey)) {
       continue;
     }
+
+    const replacement = findRouteReplacement(oldRoute, addedRoutes);
 
     for (const documentationFile of documentationFiles) {
       if (!fs.existsSync(documentationFile)) {
@@ -104,6 +111,12 @@ export function detectStaleApiRoutes(
         message:
           `${documentationFile} references "${routeKey}", but that API route ` +
           "no longer exists in the current codebase.",
+        ...(replacement
+          ? {
+              suggestion: describeRoute(replacement.route),
+              confidence: replacement.confidence,
+            }
+          : {}),
       });
     }
   }

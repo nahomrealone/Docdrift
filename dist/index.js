@@ -30025,6 +30025,7 @@ exports.detectStaleApiRoutes = detectStaleApiRoutes;
 const fs = __importStar(__nccwpck_require__(3024));
 const api_routes_1 = __nccwpck_require__(3651);
 const git_file_1 = __nccwpck_require__(5631);
+const route_suggestions_1 = __nccwpck_require__(1050);
 const ROUTE_SOURCE_EXTENSIONS = [
     ".ts",
     ".tsx",
@@ -30061,7 +30062,9 @@ function detectStaleApiRoutes(changedFiles, baseSha, headSha, documentationFiles
     }
     const oldRoutes = buildRouteInventory(baseSha);
     const currentRoutes = buildRouteInventory(headSha);
+    const oldRouteKeys = new Set(oldRoutes.map(api_routes_1.getRouteKey));
     const currentRouteKeys = new Set(currentRoutes.map(api_routes_1.getRouteKey));
+    const addedRoutes = currentRoutes.filter((route) => !oldRouteKeys.has((0, api_routes_1.getRouteKey)(route)));
     const oldRoutesByKey = new Map();
     for (const route of oldRoutes) {
         const key = (0, api_routes_1.getRouteKey)(route);
@@ -30073,6 +30076,7 @@ function detectStaleApiRoutes(changedFiles, baseSha, headSha, documentationFiles
         if (currentRouteKeys.has(routeKey)) {
             continue;
         }
+        const replacement = (0, route_suggestions_1.findRouteReplacement)(oldRoute, addedRoutes);
         for (const documentationFile of documentationFiles) {
             if (!fs.existsSync(documentationFile)) {
                 continue;
@@ -30087,6 +30091,12 @@ function detectStaleApiRoutes(changedFiles, baseSha, headSha, documentationFiles
                 reference: routeKey,
                 message: `${documentationFile} references "${routeKey}", but that API route ` +
                     "no longer exists in the current codebase.",
+                ...(replacement
+                    ? {
+                        suggestion: (0, route_suggestions_1.describeRoute)(replacement.route),
+                        confidence: replacement.confidence,
+                    }
+                    : {}),
             });
         }
     }
@@ -30312,6 +30322,101 @@ function detectStalePackageScripts(changedLines, documentationFiles) {
 
 /***/ }),
 
+/***/ 1050:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.findRouteReplacement = findRouteReplacement;
+exports.describeRoute = describeRoute;
+const api_routes_1 = __nccwpck_require__(3651);
+function getSegments(path) {
+    return path.split("/").filter(Boolean);
+}
+function isDynamicSegment(segment) {
+    return (segment.startsWith(":") || segment.startsWith("{") || segment === "*");
+}
+function dynamicShapeScore(firstPath, secondPath) {
+    const first = getSegments(firstPath);
+    const second = getSegments(secondPath);
+    if (first.length !== second.length || first.length === 0) {
+        return 0;
+    }
+    let matches = 0;
+    for (let index = 0; index < first.length; index++) {
+        const firstSegment = first[index];
+        const secondSegment = second[index];
+        if (firstSegment !== undefined &&
+            secondSegment !== undefined &&
+            isDynamicSegment(firstSegment) === isDynamicSegment(secondSegment)) {
+            matches++;
+        }
+    }
+    return matches / first.length;
+}
+function levenshtein(first, second) {
+    const matrix = Array.from({ length: first.length + 1 }, () => new Array(second.length + 1).fill(0));
+    for (let index = 0; index <= first.length; index++) {
+        matrix[index][0] = index;
+    }
+    for (let index = 0; index <= second.length; index++) {
+        matrix[0][index] = index;
+    }
+    for (let firstIndex = 1; firstIndex <= first.length; firstIndex++) {
+        for (let secondIndex = 1; secondIndex <= second.length; secondIndex++) {
+            const cost = first[firstIndex - 1] === second[secondIndex - 1] ? 0 : 1;
+            matrix[firstIndex][secondIndex] = Math.min(matrix[firstIndex - 1][secondIndex] + 1, matrix[firstIndex][secondIndex - 1] + 1, matrix[firstIndex - 1][secondIndex - 1] + cost);
+        }
+    }
+    return matrix[first.length][second.length];
+}
+function stringSimilarity(first, second) {
+    const longest = Math.max(first.length, second.length);
+    if (longest === 0) {
+        return 1;
+    }
+    return 1 - levenshtein(first, second) / longest;
+}
+function scoreCandidate(removed, candidate) {
+    if (removed.method !== candidate.method) {
+        return 0;
+    }
+    const oldSegments = getSegments(removed.path);
+    const newSegments = getSegments(candidate.path);
+    let score = 0.45;
+    if (oldSegments.length === newSegments.length) {
+        score += 0.2;
+    }
+    score += dynamicShapeScore(removed.path, candidate.path) * 0.2;
+    score += stringSimilarity(removed.path, candidate.path) * 0.15;
+    return Math.min(score, 1);
+}
+function findRouteReplacement(removedRoute, addedRoutes) {
+    const candidates = addedRoutes
+        .map((route) => ({
+        route,
+        confidence: scoreCandidate(removedRoute, route),
+    }))
+        .filter((candidate) => candidate.confidence >= 0.72)
+        .sort((first, second) => second.confidence - first.confidence);
+    const best = candidates[0];
+    const second = candidates[1];
+    if (!best) {
+        return null;
+    }
+    if (second && best.confidence - second.confidence < 0.08) {
+        return null;
+    }
+    return best;
+}
+function describeRoute(route) {
+    return (0, api_routes_1.getRouteKey)(route);
+}
+
+
+/***/ }),
+
 /***/ 9952:
 /***/ ((__unused_webpack_module, exports) => {
 
@@ -30365,7 +30470,14 @@ function buildReport(findings) {
     for (const finding of findings) {
         body += `### ${finding.documentationFile}\n`;
         body += `- **Problem:** ${finding.message}\n`;
-        body += `- **Stale reference:** \`${finding.reference}\`\n\n`;
+        body += `- **Stale reference:** \`${finding.reference}\`\n`;
+        if (finding.suggestion) {
+            body += `- **Possible replacement:** \`${finding.suggestion}\`\n`;
+        }
+        if (finding.confidence !== undefined) {
+            body += `- **Confidence:** ${Math.round(finding.confidence * 100)}%\n`;
+        }
+        body += "\n";
     }
     return body;
 }

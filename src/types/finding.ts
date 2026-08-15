@@ -8,4 +8,6 @@ export interface DocumentationFinding {
   documentationFile: string;
   reference: string;
   message: string;
+  suggestion?: string;
+  confidence?: number;
 }
