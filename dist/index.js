@@ -29982,6 +29982,110 @@ function classifyFile(filename) {
 
 /***/ }),
 
+/***/ 5566:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.detectStaleApiRoutes = detectStaleApiRoutes;
+const fs = __importStar(__nccwpck_require__(3024));
+const express_routes_1 = __nccwpck_require__(8143);
+const git_file_1 = __nccwpck_require__(5631);
+const ROUTE_SOURCE_EXTENSIONS = [
+    ".ts",
+    ".tsx",
+    ".js",
+    ".jsx",
+    ".mjs",
+    ".cjs",
+];
+function isRouteSourceFile(filename) {
+    const normalized = filename.toLowerCase();
+    return ROUTE_SOURCE_EXTENSIONS.some((extension) => normalized.endsWith(extension));
+}
+function documentationReferencesRoute(documentation, route) {
+    const escapedPath = route.path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = new RegExp(`${route.method}\\s+\`?${escapedPath}\`?`, "i");
+    return pattern.test(documentation);
+}
+function detectStaleApiRoutes(changedFiles, baseSha, headSha, documentationFiles) {
+    const findings = [];
+    for (const file of changedFiles) {
+        if (!isRouteSourceFile(file.filename)) {
+            continue;
+        }
+        const baseContent = (0, git_file_1.readFileAtRef)(baseSha, file.filename);
+        const headContent = (0, git_file_1.readFileAtRef)(headSha, file.filename);
+        const oldRoutes = baseContent
+            ? (0, express_routes_1.parseExpressRoutes)(baseContent, file.filename)
+            : [];
+        const currentRoutes = headContent
+            ? (0, express_routes_1.parseExpressRoutes)(headContent, file.filename)
+            : [];
+        const currentRouteKeys = new Set(currentRoutes.map(express_routes_1.getRouteKey));
+        for (const oldRoute of oldRoutes) {
+            const routeKey = (0, express_routes_1.getRouteKey)(oldRoute);
+            if (currentRouteKeys.has(routeKey)) {
+                continue;
+            }
+            for (const documentationFile of documentationFiles) {
+                if (!fs.existsSync(documentationFile)) {
+                    continue;
+                }
+                const documentation = fs.readFileSync(documentationFile, "utf8");
+                if (!documentationReferencesRoute(documentation, oldRoute)) {
+                    continue;
+                }
+                findings.push({
+                    type: "stale-api-route",
+                    documentationFile,
+                    reference: routeKey,
+                    message: `${documentationFile} references "${routeKey}", but that API route ` +
+                        `no longer exists in ${file.filename}.`,
+                });
+            }
+        }
+    }
+    return findings;
+}
+
+
+/***/ }),
+
 /***/ 5307:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -30327,6 +30431,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 const core = __importStar(__nccwpck_require__(7484));
 const github = __importStar(__nccwpck_require__(3228));
 const classify_1 = __nccwpck_require__(3813);
+const api_routes_1 = __nccwpck_require__(5566);
 const env_vars_1 = __nccwpck_require__(5307);
 const package_scripts_1 = __nccwpck_require__(2630);
 const diff_1 = __nccwpck_require__(9952);
@@ -30345,6 +30450,8 @@ async function run() {
             throw new Error("DocDrift must run on a pull request.");
         }
         const pullNumber = pullRequest.number;
+        const baseSha = pullRequest.base.sha;
+        const headSha = pullRequest.head.sha;
         core.info(`Repository: ${owner}/${repo}`);
         core.info(`Pull Request: #${pullNumber}`);
         const files = await octokit.paginate(octokit.rest.pulls.listFiles, {
@@ -30399,6 +30506,8 @@ async function run() {
         }
         const environmentFindings = (0, env_vars_1.detectStaleEnvironmentVariables)(changedCodeForAnalysis, currentCodeFiles, trackedDocumentationFiles);
         findings.push(...environmentFindings);
+        const apiRouteFindings = (0, api_routes_1.detectStaleApiRoutes)(codeFiles, baseSha, headSha, trackedDocumentationFiles);
+        findings.push(...apiRouteFindings);
         core.info("");
         core.info("🔎 Documentation Drift Analysis");
         if (findings.length === 0) {
@@ -30421,6 +30530,63 @@ async function run() {
     }
 }
 run();
+
+
+/***/ }),
+
+/***/ 8143:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.parseExpressRoutes = parseExpressRoutes;
+exports.getRouteKey = getRouteKey;
+const EXPRESS_ROUTE_PATTERN = /\b(app|router)\s*\.\s*(get|post|put|patch|delete|options|head)\s*\(\s*(["'`])([^"'`]+)\3/g;
+function parseExpressRoutes(content, filename) {
+    const routes = [];
+    for (const match of content.matchAll(EXPRESS_ROUTE_PATTERN)) {
+        const methodName = match[2];
+        const path = match[4];
+        if (!methodName || !path || path.includes("${")) {
+            continue;
+        }
+        const method = methodName.toUpperCase();
+        routes.push({
+            method,
+            path,
+            file: filename,
+            framework: "express",
+        });
+    }
+    return routes;
+}
+function getRouteKey(route) {
+    return `${route.method} ${route.path}`;
+}
+
+
+/***/ }),
+
+/***/ 5631:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.readFileAtRef = readFileAtRef;
+const node_child_process_1 = __nccwpck_require__(1421);
+function readFileAtRef(ref, filename) {
+    try {
+        return (0, node_child_process_1.execFileSync)("git", ["show", `${ref}:${filename}`], {
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "ignore"],
+        });
+    }
+    catch {
+        return null;
+    }
+}
 
 
 /***/ }),

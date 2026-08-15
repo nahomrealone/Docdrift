@@ -1,6 +1,7 @@
 import * as core from "@actions/core";
 import * as github from "@actions/github";
 import { classifyFile } from "./classify";
+import { detectStaleApiRoutes } from "./detectors/api-routes";
 import { detectStaleEnvironmentVariables } from "./detectors/env-vars";
 import { detectStalePackageScripts } from "./detectors/package-scripts";
 import { extractChangedLines } from "./diff";
@@ -26,6 +27,8 @@ async function run() {
     }
 
     const pullNumber = pullRequest.number;
+    const baseSha = pullRequest.base.sha;
+    const headSha = pullRequest.head.sha;
 
     core.info(`Repository: ${owner}/${repo}`);
     core.info(`Pull Request: #${pullNumber}`);
@@ -118,6 +121,15 @@ async function run() {
     );
 
     findings.push(...environmentFindings);
+
+    const apiRouteFindings = detectStaleApiRoutes(
+      codeFiles,
+      baseSha,
+      headSha,
+      trackedDocumentationFiles,
+    );
+
+    findings.push(...apiRouteFindings);
 
     core.info("");
     core.info("🔎 Documentation Drift Analysis");
