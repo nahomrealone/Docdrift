@@ -1,5 +1,6 @@
 import * as core from "@actions/core";
 import * as github from "@actions/github";
+import { classifyFile } from "./classify";
 import { extractChangedLines } from "./diff";
 
 async function run() {
@@ -34,10 +35,34 @@ async function run() {
 
     core.info(`Changed files: ${files.length}`);
 
+    const codeFiles = files.filter(
+      (file) => classifyFile(file.filename) === "code",
+    );
+
+    const documentationFiles = files.filter(
+      (file) => classifyFile(file.filename) === "documentation",
+    );
+
+    const ignoredFiles = files.filter(
+      (file) => classifyFile(file.filename) === "ignored",
+    );
+
+    core.info("");
+    core.info("📊 DocDrift Classification");
+    core.info(`Code files: ${codeFiles.length}`);
+    core.info(`Documentation files: ${documentationFiles.length}`);
+    core.info(`Ignored files: ${ignoredFiles.length}`);
+
     for (const file of files) {
+      const category = classifyFile(file.filename);
+
       core.info("");
-      core.info(`📄 ${file.filename}`);
-      core.info(`Status: ${file.status}`);
+      core.info(`📄 ${file.filename} [${category.toUpperCase()}]`);
+
+      if (category === "ignored") {
+        core.info("Skipped.");
+        continue;
+      }
 
       const changedLines = extractChangedLines(file.patch);
 

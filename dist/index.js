@@ -29922,6 +29922,66 @@ function wrappy (fn, cb) {
 
 /***/ }),
 
+/***/ 3813:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.classifyFile = classifyFile;
+const ignoredDirectories = [
+    "dist/",
+    "node_modules/",
+    ".next/",
+    "build/",
+    "coverage/",
+];
+const ignoredFiles = [
+    "package-lock.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "bun.lock",
+    "bun.lockb",
+];
+const codeExtensions = [
+    ".ts",
+    ".tsx",
+    ".js",
+    ".jsx",
+    ".mjs",
+    ".cjs",
+    ".json",
+    ".yml",
+    ".yaml",
+    ".py",
+    ".java",
+    ".go",
+    ".rs",
+    ".cs",
+    ".c",
+    ".cpp",
+    ".h",
+];
+function classifyFile(filename) {
+    const normalized = filename.toLowerCase();
+    if (ignoredDirectories.some((directory) => normalized.startsWith(directory))) {
+        return "ignored";
+    }
+    if (ignoredFiles.some((ignoredFile) => normalized === ignoredFile)) {
+        return "ignored";
+    }
+    if (normalized.endsWith(".md") || normalized.endsWith(".mdx")) {
+        return "documentation";
+    }
+    if (codeExtensions.some((extension) => normalized.endsWith(extension))) {
+        return "code";
+    }
+    return "ignored";
+}
+
+
+/***/ }),
+
 /***/ 9952:
 /***/ ((__unused_webpack_module, exports) => {
 
@@ -29998,6 +30058,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 const core = __importStar(__nccwpck_require__(7484));
 const github = __importStar(__nccwpck_require__(3228));
+const classify_1 = __nccwpck_require__(3813);
 const diff_1 = __nccwpck_require__(9952);
 async function run() {
     try {
@@ -30021,10 +30082,22 @@ async function run() {
             per_page: 100,
         });
         core.info(`Changed files: ${files.length}`);
+        const codeFiles = files.filter((file) => (0, classify_1.classifyFile)(file.filename) === "code");
+        const documentationFiles = files.filter((file) => (0, classify_1.classifyFile)(file.filename) === "documentation");
+        const ignoredFiles = files.filter((file) => (0, classify_1.classifyFile)(file.filename) === "ignored");
+        core.info("");
+        core.info("📊 DocDrift Classification");
+        core.info(`Code files: ${codeFiles.length}`);
+        core.info(`Documentation files: ${documentationFiles.length}`);
+        core.info(`Ignored files: ${ignoredFiles.length}`);
         for (const file of files) {
+            const category = (0, classify_1.classifyFile)(file.filename);
             core.info("");
-            core.info(`📄 ${file.filename}`);
-            core.info(`Status: ${file.status}`);
+            core.info(`📄 ${file.filename} [${category.toUpperCase()}]`);
+            if (category === "ignored") {
+                core.info("Skipped.");
+                continue;
+            }
             const changedLines = (0, diff_1.extractChangedLines)(file.patch);
             if (changedLines.length === 0) {
                 core.info("No readable text changes.");
