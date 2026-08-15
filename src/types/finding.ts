@@ -1,3 +1,5 @@
+import type { DocumentationLocation } from "./documentation";
+
 export type FindingType =
   | "stale-package-script"
   | "stale-env-var"
@@ -10,4 +12,5 @@ export interface DocumentationFinding {
   message: string;
   suggestion?: string;
   confidence?: number;
+  locations?: DocumentationLocation[];
 }

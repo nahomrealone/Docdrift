@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 
 import type { ChangedLine } from "../diff";
+import { locateReference } from "../documentation/locator";
 import type { DocumentationFinding } from "../types/finding";
 
 function escapeRegExp(value: string): string {
@@ -74,6 +75,12 @@ export function detectStalePackageScripts(
         continue;
       }
 
+      const locations = locateReference(documentation, reference);
+
+      if (locations.length === 0) {
+        continue;
+      }
+
       findings.push({
         type: "stale-package-script",
         documentationFile,
@@ -81,6 +88,7 @@ export function detectStalePackageScripts(
         message:
           `${documentationFile} references "${reference}", ` +
           `but package.json no longer defines the "${scriptName}" script.`,
+        locations,
       });
     }
   }

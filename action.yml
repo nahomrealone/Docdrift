@@ -5,6 +5,10 @@ inputs:
   github-token:
     description: "GitHub token used to read pull request information"
     required: true
+  config-path:
+    description: "Path to the DocDrift configuration file"
+    required: false
+    default: ".docdrift.yml"
 
 runs:
   using: "node24"
