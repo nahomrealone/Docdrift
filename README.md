@@ -7,5 +7,5 @@ Testing the DocDrift GitHub Action.
 Run DocDrift locally with:
 
 ```bash
-npm run dev
+npm run develop
 ```
