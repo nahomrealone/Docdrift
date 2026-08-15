@@ -1,14 +1,7 @@
 import * as fs from "node:fs";
 
 import type { ChangedLine } from "../diff";
-
-export interface DocumentationFinding {
-  type: "stale-package-script";
-  documentationFile: string;
-  scriptName: string;
-  reference: string;
-  message: string;
-}
+import type { DocumentationFinding } from "../types/finding";
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -84,7 +77,6 @@ export function detectStalePackageScripts(
       findings.push({
         type: "stale-package-script",
         documentationFile,
-        scriptName,
         reference,
         message:
           `${documentationFile} references "${reference}", ` +

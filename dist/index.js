@@ -29982,6 +29982,123 @@ function classifyFile(filename) {
 
 /***/ }),
 
+/***/ 5307:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.detectStaleEnvironmentVariables = detectStaleEnvironmentVariables;
+const fs = __importStar(__nccwpck_require__(3024));
+const ENV_PATTERNS = [
+    /process\.env\.([A-Z][A-Z0-9_]*)/g,
+    /process\.env\[\s*["']([A-Z][A-Z0-9_]*)["']\s*\]/g,
+    /import\.meta\.env\.([A-Z][A-Z0-9_]*)/g,
+];
+function extractEnvironmentVariables(content) {
+    const variables = new Set();
+    for (const pattern of ENV_PATTERNS) {
+        for (const match of content.matchAll(pattern)) {
+            const variableName = match[1];
+            if (variableName) {
+                variables.add(variableName);
+            }
+        }
+    }
+    return [...variables];
+}
+function repositoryStillUsesVariable(variableName, codeFiles) {
+    for (const file of codeFiles) {
+        if (!fs.existsSync(file)) {
+            continue;
+        }
+        const content = fs.readFileSync(file, "utf8");
+        const variables = extractEnvironmentVariables(content);
+        if (variables.includes(variableName)) {
+            return true;
+        }
+    }
+    return false;
+}
+function documentationReferencesVariable(documentation, variableName) {
+    const escaped = variableName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = new RegExp(`\\b${escaped}\\b`);
+    return pattern.test(documentation);
+}
+function detectStaleEnvironmentVariables(changedCodeFiles, currentCodeFiles, documentationFiles) {
+    const findings = [];
+    const removedVariables = new Set();
+    for (const file of changedCodeFiles) {
+        for (const line of file.changedLines) {
+            if (line.type !== "removed") {
+                continue;
+            }
+            const variables = extractEnvironmentVariables(line.content);
+            for (const variable of variables) {
+                removedVariables.add(variable);
+            }
+        }
+    }
+    for (const variableName of removedVariables) {
+        if (repositoryStillUsesVariable(variableName, currentCodeFiles)) {
+            continue;
+        }
+        for (const documentationFile of documentationFiles) {
+            if (!fs.existsSync(documentationFile)) {
+                continue;
+            }
+            const documentation = fs.readFileSync(documentationFile, "utf8");
+            if (!documentationReferencesVariable(documentation, variableName)) {
+                continue;
+            }
+            findings.push({
+                type: "stale-env-var",
+                documentationFile,
+                reference: variableName,
+                message: `${documentationFile} references "${variableName}", ` +
+                    "but the current code no longer references that environment variable.",
+            });
+        }
+    }
+    return findings;
+}
+
+
+/***/ }),
+
 /***/ 2630:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -30069,7 +30186,6 @@ function detectStalePackageScripts(changedLines, documentationFiles) {
             findings.push({
                 type: "stale-package-script",
                 documentationFile,
-                scriptName,
                 reference,
                 message: `${documentationFile} references "${reference}", ` +
                     `but package.json no longer defines the "${scriptName}" script.`,
@@ -30211,9 +30327,11 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 const core = __importStar(__nccwpck_require__(7484));
 const github = __importStar(__nccwpck_require__(3228));
 const classify_1 = __nccwpck_require__(3813);
+const env_vars_1 = __nccwpck_require__(5307);
 const package_scripts_1 = __nccwpck_require__(2630);
 const diff_1 = __nccwpck_require__(9952);
 const comment_1 = __nccwpck_require__(7318);
+const tracked_files_1 = __nccwpck_require__(7608);
 async function run() {
     try {
         core.info("🚀 DocDrift is running inside GitHub!");
@@ -30239,6 +30357,12 @@ async function run() {
         const codeFiles = files.filter((file) => (0, classify_1.classifyFile)(file.filename) === "code");
         const documentationFiles = files.filter((file) => (0, classify_1.classifyFile)(file.filename) === "documentation");
         const ignoredFiles = files.filter((file) => (0, classify_1.classifyFile)(file.filename) === "ignored");
+        const currentCodeFiles = (0, tracked_files_1.listTrackedFiles)("code");
+        const trackedDocumentationFiles = (0, tracked_files_1.listTrackedFiles)("documentation");
+        const changedCodeForAnalysis = codeFiles.map((file) => ({
+            filename: file.filename,
+            changedLines: (0, diff_1.extractChangedLines)(file.patch),
+        }));
         core.info("");
         core.info("📊 DocDrift Classification");
         core.info(`Code files: ${codeFiles.length}`);
@@ -30270,11 +30394,11 @@ async function run() {
         const findings = [];
         if (packageJsonFile) {
             const packageChanges = (0, diff_1.extractChangedLines)(packageJsonFile.patch);
-            const packageScriptFindings = (0, package_scripts_1.detectStalePackageScripts)(packageChanges, [
-                "README.md",
-            ]);
+            const packageScriptFindings = (0, package_scripts_1.detectStalePackageScripts)(packageChanges, trackedDocumentationFiles);
             findings.push(...packageScriptFindings);
         }
+        const environmentFindings = (0, env_vars_1.detectStaleEnvironmentVariables)(changedCodeForAnalysis, currentCodeFiles, trackedDocumentationFiles);
+        findings.push(...environmentFindings);
         core.info("");
         core.info("🔎 Documentation Drift Analysis");
         if (findings.length === 0) {
@@ -30297,6 +30421,29 @@ async function run() {
     }
 }
 run();
+
+
+/***/ }),
+
+/***/ 7608:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.listTrackedFiles = listTrackedFiles;
+const node_child_process_1 = __nccwpck_require__(1421);
+const classify_1 = __nccwpck_require__(3813);
+function listTrackedFiles(category) {
+    const output = (0, node_child_process_1.execFileSync)("git", ["ls-files"], {
+        encoding: "utf8",
+    });
+    const files = output.split(/\r?\n/).filter(Boolean);
+    if (!category) {
+        return files;
+    }
+    return files.filter((file) => (0, classify_1.classifyFile)(file) === category);
+}
 
 
 /***/ }),
@@ -30402,6 +30549,14 @@ module.exports = require("https");
 
 "use strict";
 module.exports = require("net");
+
+/***/ }),
+
+/***/ 1421:
+/***/ ((module) => {
+
+"use strict";
+module.exports = require("node:child_process");
 
 /***/ }),
 
