@@ -3,7 +3,8 @@ import type { DocumentationLocation } from "./documentation";
 export type FindingType =
   | "stale-package-script"
   | "stale-env-var"
-  | "stale-api-route";
+  | "stale-api-route"
+  | "semantic-drift";
 
 export interface DocumentationFinding {
   type: FindingType;

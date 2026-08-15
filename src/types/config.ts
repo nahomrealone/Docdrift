@@ -4,6 +4,13 @@ export interface DetectorConfig {
   packageScripts: boolean;
   envVars: boolean;
   apiRoutes: boolean;
+  semantic: boolean;
+}
+
+export interface SemanticConfig {
+  confidenceThreshold: number;
+  provider: "gemini";
+  model: string;
 }
 
 export interface DocumentationPathConfig {
@@ -21,4 +28,5 @@ export interface DocDriftConfig {
   mode: DocDriftMode;
   detectors: DetectorConfig;
   paths: PathConfig;
+  semantic: SemanticConfig;
 }

@@ -28,6 +28,26 @@ export function parseConfig(raw: string): DocDriftConfig {
     throw new Error(`Invalid DocDrift mode: ${parsed.mode}`);
   }
 
+  const confidence = parsed.semantic?.confidenceThreshold;
+
+  if (
+    confidence !== undefined &&
+    (typeof confidence !== "number" || confidence < 0 || confidence > 1)
+  ) {
+    throw new Error(
+      "semantic.confidenceThreshold must be between 0 and 1",
+    );
+  }
+
+  if (
+    parsed.semantic?.provider !== undefined &&
+    parsed.semantic.provider !== "gemini"
+  ) {
+    throw new Error(
+      `Unsupported semantic provider: ${parsed.semantic.provider}`,
+    );
+  }
+
   return {
     version: 1,
     mode: parsed.mode ?? DEFAULT_CONFIG.mode,
@@ -38,6 +58,8 @@ export function parseConfig(raw: string): DocDriftConfig {
       envVars: parsed.detectors?.envVars ?? DEFAULT_CONFIG.detectors.envVars,
       apiRoutes:
         parsed.detectors?.apiRoutes ?? DEFAULT_CONFIG.detectors.apiRoutes,
+      semantic:
+        parsed.detectors?.semantic ?? DEFAULT_CONFIG.detectors.semantic,
     },
     paths: {
       documentation: {
@@ -49,6 +71,13 @@ export function parseConfig(raw: string): DocDriftConfig {
           DEFAULT_CONFIG.paths.documentation.exclude,
       },
       ignore: parsed.paths?.ignore ?? DEFAULT_CONFIG.paths.ignore,
+    },
+    semantic: {
+      confidenceThreshold:
+        confidence ?? DEFAULT_CONFIG.semantic.confidenceThreshold,
+      provider:
+        parsed.semantic?.provider ?? DEFAULT_CONFIG.semantic.provider,
+      model: parsed.semantic?.model ?? DEFAULT_CONFIG.semantic.model,
     },
   };
 }

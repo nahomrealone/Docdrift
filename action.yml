@@ -9,6 +9,9 @@ inputs:
     description: "Path to the DocDrift configuration file"
     required: false
     default: ".docdrift.yml"
+  gemini-api-key:
+    description: "Gemini API key used for semantic drift detection"
+    required: false
 
 runs:
   using: "node24"

@@ -3,6 +3,12 @@ export interface DetectorConfig {
     packageScripts: boolean;
     envVars: boolean;
     apiRoutes: boolean;
+    semantic: boolean;
+}
+export interface SemanticConfig {
+    confidenceThreshold: number;
+    provider: "gemini";
+    model: string;
 }
 export interface DocumentationPathConfig {
     include: string[];
@@ -17,5 +23,6 @@ export interface DocDriftConfig {
     mode: DocDriftMode;
     detectors: DetectorConfig;
     paths: PathConfig;
+    semantic: SemanticConfig;
 }
 //# sourceMappingURL=config.d.ts.map

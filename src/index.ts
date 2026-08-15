@@ -6,11 +6,22 @@ import { parseConfig } from "./config/load";
 import { detectStaleApiRoutes } from "./detectors/api-routes";
 import { detectStaleEnvironmentVariables } from "./detectors/env-vars";
 import { detectStalePackageScripts } from "./detectors/package-scripts";
+import {
+  analyzeSemanticCandidates,
+  discoverSemanticCandidates,
+} from "./detectors/semantic";
 import { extractChangedLines } from "./diff";
 import { publishDocDriftComment } from "./github/comment";
 import { isDocumentationPath, isIgnoredPath } from "./paths/matcher";
-import { readFileAtRef } from "./repository/git-file";
-import { listTrackedFiles } from "./repository/tracked-files";
+import { listFilesAtRef, readFileAtRef } from "./repository/git-file";
+import { createSemanticProvider } from "./semantic/provider-factory";
+import type { DocumentationFinding } from "./types/finding";
+
+function findingFingerprint(finding: DocumentationFinding): string {
+  const line = finding.locations?.[0]?.line ?? 0;
+
+  return [finding.documentationFile, line, finding.reference].join(":");
+}
 
 async function run() {
   try {
@@ -21,6 +32,7 @@ async function run() {
     });
 
     const configPath = core.getInput("config-path") || ".docdrift.yml";
+    const geminiApiKey = core.getInput("gemini-api-key");
 
     const octokit = github.getOctokit(token);
 
@@ -39,6 +51,10 @@ async function run() {
 
     const configContent = readFileAtRef(baseSha, configPath);
     const config = configContent ? parseConfig(configContent) : DEFAULT_CONFIG;
+    const semanticProvider = createSemanticProvider({
+      config,
+      ...(geminiApiKey ? { geminiApiKey } : {}),
+    });
 
     core.info(`DocDrift mode: ${config.mode}`);
 
@@ -70,13 +86,19 @@ async function run() {
       (file) => !isIgnoredPath(file.filename, config.paths),
     );
 
-    const currentCodeFiles = listTrackedFiles("code").filter(
-      (filename) => !isIgnoredPath(filename, config.paths),
+    const headFiles = listFilesAtRef(headSha);
+
+    const currentCodeFiles = headFiles.filter(
+      (filename) =>
+        classifyFile(filename) === "code" &&
+        !isIgnoredPath(filename, config.paths),
     );
 
-    const trackedDocumentationFiles = listTrackedFiles(
-      "documentation",
-    ).filter((filename) => isDocumentationPath(filename, config.paths));
+    const trackedDocumentationFiles = headFiles.filter(
+      (filename) =>
+        classifyFile(filename) === "documentation" &&
+        isDocumentationPath(filename, config.paths),
+    );
 
     const changedCodeForAnalysis = analyzableCodeFiles.map((file) => ({
       filename: file.filename,
@@ -124,7 +146,7 @@ async function run() {
       (file) => file.filename === "package.json",
     );
 
-    const findings = [];
+    const deterministicFindings: DocumentationFinding[] = [];
 
     if (config.detectors.packageScripts && packageJsonFile) {
       const packageChanges = extractChangedLines(packageJsonFile.patch);
@@ -134,7 +156,7 @@ async function run() {
         trackedDocumentationFiles,
       );
 
-      findings.push(...packageScriptFindings);
+      deterministicFindings.push(...packageScriptFindings);
     }
 
     if (config.detectors.envVars) {
@@ -144,7 +166,7 @@ async function run() {
         trackedDocumentationFiles,
       );
 
-      findings.push(...environmentFindings);
+      deterministicFindings.push(...environmentFindings);
     }
 
     if (config.detectors.apiRoutes) {
@@ -156,32 +178,100 @@ async function run() {
         config.paths,
       );
 
-      findings.push(...apiRouteFindings);
+      deterministicFindings.push(...apiRouteFindings);
     }
+
+    const semanticFindings: DocumentationFinding[] = [];
+
+    if (config.detectors.semantic && !semanticProvider) {
+      core.warning(
+        "Semantic drift detection is enabled, but no Gemini API key is " +
+          "available. Skipping semantic analysis.",
+      );
+    }
+
+    if (config.detectors.semantic && semanticProvider) {
+      const semanticCandidates = discoverSemanticCandidates(
+        true,
+        changedCodeForAnalysis,
+        trackedDocumentationFiles,
+        headSha,
+      );
+
+      core.info("");
+      core.info("🧠 Semantic candidates");
+
+      if (semanticCandidates.length === 0) {
+        core.info("No relevant documentation sections found.");
+      }
+
+      for (const candidate of semanticCandidates) {
+        core.info("");
+        core.info(`Changed: ${candidate.filename}`);
+        core.info(`Identifiers: ${candidate.identifiers.join(", ")}`);
+        core.info(
+          `Matched: ${candidate.documentationFile} → ${candidate.section.heading} ` +
+            `(lines ${candidate.section.startLine}-${candidate.section.endLine})`,
+        );
+      }
+
+      const analyzedFindings = await analyzeSemanticCandidates(
+        semanticCandidates,
+        semanticProvider,
+        config.semantic.confidenceThreshold,
+        baseSha,
+        headSha,
+      );
+
+      const existingFingerprints = new Set(
+        deterministicFindings.map(findingFingerprint),
+      );
+
+      for (const finding of analyzedFindings) {
+        const fingerprint = findingFingerprint(finding);
+
+        if (existingFingerprints.has(fingerprint)) {
+          continue;
+        }
+
+        semanticFindings.push(finding);
+        existingFingerprints.add(fingerprint);
+      }
+    }
+
+    const allFindings = [...deterministicFindings, ...semanticFindings];
 
     core.info("");
     core.info("🔎 Documentation Drift Analysis");
 
-    if (findings.length === 0) {
+    if (allFindings.length === 0) {
       core.info("✅ No documentation drift detected.");
     } else {
-      core.warning(`${findings.length} documentation issue(s) detected.`);
+      core.warning(`${allFindings.length} documentation issue(s) detected.`);
 
-      for (const finding of findings) {
+      for (const finding of allFindings) {
         core.warning("");
         core.warning(`⚠️ ${finding.documentationFile}`);
         core.warning(finding.message);
       }
     }
 
-    await publishDocDriftComment(octokit, owner, repo, pullNumber, findings, {
-      serverUrl,
-      headSha,
-    });
+    await publishDocDriftComment(
+      octokit,
+      owner,
+      repo,
+      pullNumber,
+      allFindings,
+      {
+        serverUrl,
+        headSha,
+      },
+    );
 
-    if (config.mode === "enforce" && findings.length > 0) {
+    if (config.mode === "enforce" && deterministicFindings.length > 0) {
       core.setFailed(
-        `DocDrift detected ${findings.length} stale documentation issue(s).`,
+        `DocDrift detected ${deterministicFindings.length} deterministic ` +
+          "stale documentation issue(s).",
       );
     }
   } catch (error) {
