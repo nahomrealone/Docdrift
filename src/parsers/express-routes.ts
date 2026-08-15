@@ -1,7 +1,7 @@
 import type { HttpMethod, RouteDefinition } from "../types/route";
 
 const EXPRESS_ROUTE_PATTERN =
-  /\b(app|router)\s*\.\s*(get|post|put|patch|delete|options|head)\s*\(\s*(["'`])([^"'`]+)\3/g;
+  /\b(app|router)\s*\.\s*(get|post|put|patch|delete|options|head)\s*\(\s*(["'`])([^"'`]+)\3\s*,/g;
 
 export function parseExpressRoutes(
   content: string,
@@ -28,8 +28,4 @@ export function parseExpressRoutes(
   }
 
   return routes;
-}
-
-export function getRouteKey(route: RouteDefinition): string {
-  return `${route.method} ${route.path}`;
 }

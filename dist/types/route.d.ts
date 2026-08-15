@@ -3,6 +3,6 @@ export interface RouteDefinition {
     method: HttpMethod;
     path: string;
     file: string;
-    framework: "express";
+    framework: "express" | "nestjs";
 }
 //# sourceMappingURL=route.d.ts.map

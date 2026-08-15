@@ -30023,7 +30023,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.detectStaleApiRoutes = detectStaleApiRoutes;
 const fs = __importStar(__nccwpck_require__(3024));
-const express_routes_1 = __nccwpck_require__(8143);
+const api_routes_1 = __nccwpck_require__(3651);
 const git_file_1 = __nccwpck_require__(5631);
 const ROUTE_SOURCE_EXTENSIONS = [
     ".ts",
@@ -30037,6 +30037,18 @@ function isRouteSourceFile(filename) {
     const normalized = filename.toLowerCase();
     return ROUTE_SOURCE_EXTENSIONS.some((extension) => normalized.endsWith(extension));
 }
+function buildRouteInventory(ref) {
+    const routes = [];
+    const files = (0, git_file_1.listFilesAtRef)(ref).filter(isRouteSourceFile);
+    for (const filename of files) {
+        const content = (0, git_file_1.readFileAtRef)(ref, filename);
+        if (!content) {
+            continue;
+        }
+        routes.push(...(0, api_routes_1.parseApiRoutes)(content, filename));
+    }
+    return routes;
+}
 function documentationReferencesRoute(documentation, route) {
     const escapedPath = route.path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const pattern = new RegExp(`${route.method}\\s+\`?${escapedPath}\`?`, "i");
@@ -30044,40 +30056,38 @@ function documentationReferencesRoute(documentation, route) {
 }
 function detectStaleApiRoutes(changedFiles, baseSha, headSha, documentationFiles) {
     const findings = [];
-    for (const file of changedFiles) {
-        if (!isRouteSourceFile(file.filename)) {
+    if (!changedFiles.some((file) => isRouteSourceFile(file.filename))) {
+        return findings;
+    }
+    const oldRoutes = buildRouteInventory(baseSha);
+    const currentRoutes = buildRouteInventory(headSha);
+    const currentRouteKeys = new Set(currentRoutes.map(api_routes_1.getRouteKey));
+    const oldRoutesByKey = new Map();
+    for (const route of oldRoutes) {
+        const key = (0, api_routes_1.getRouteKey)(route);
+        if (!oldRoutesByKey.has(key)) {
+            oldRoutesByKey.set(key, route);
+        }
+    }
+    for (const [routeKey, oldRoute] of oldRoutesByKey) {
+        if (currentRouteKeys.has(routeKey)) {
             continue;
         }
-        const baseContent = (0, git_file_1.readFileAtRef)(baseSha, file.filename);
-        const headContent = (0, git_file_1.readFileAtRef)(headSha, file.filename);
-        const oldRoutes = baseContent
-            ? (0, express_routes_1.parseExpressRoutes)(baseContent, file.filename)
-            : [];
-        const currentRoutes = headContent
-            ? (0, express_routes_1.parseExpressRoutes)(headContent, file.filename)
-            : [];
-        const currentRouteKeys = new Set(currentRoutes.map(express_routes_1.getRouteKey));
-        for (const oldRoute of oldRoutes) {
-            const routeKey = (0, express_routes_1.getRouteKey)(oldRoute);
-            if (currentRouteKeys.has(routeKey)) {
+        for (const documentationFile of documentationFiles) {
+            if (!fs.existsSync(documentationFile)) {
                 continue;
             }
-            for (const documentationFile of documentationFiles) {
-                if (!fs.existsSync(documentationFile)) {
-                    continue;
-                }
-                const documentation = fs.readFileSync(documentationFile, "utf8");
-                if (!documentationReferencesRoute(documentation, oldRoute)) {
-                    continue;
-                }
-                findings.push({
-                    type: "stale-api-route",
-                    documentationFile,
-                    reference: routeKey,
-                    message: `${documentationFile} references "${routeKey}", but that API route ` +
-                        `no longer exists in ${file.filename}.`,
-                });
+            const documentation = fs.readFileSync(documentationFile, "utf8");
+            if (!documentationReferencesRoute(documentation, oldRoute)) {
+                continue;
             }
+            findings.push({
+                type: "stale-api-route",
+                documentationFile,
+                reference: routeKey,
+                message: `${documentationFile} references "${routeKey}", but that API route ` +
+                    "no longer exists in the current codebase.",
+            });
         }
     }
     return findings;
@@ -30534,6 +30544,29 @@ run();
 
 /***/ }),
 
+/***/ 3651:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.parseApiRoutes = parseApiRoutes;
+exports.getRouteKey = getRouteKey;
+const express_routes_1 = __nccwpck_require__(8143);
+const nestjs_routes_1 = __nccwpck_require__(8038);
+function parseApiRoutes(content, filename) {
+    return [
+        ...(0, express_routes_1.parseExpressRoutes)(content, filename),
+        ...(0, nestjs_routes_1.parseNestJsRoutes)(content, filename),
+    ];
+}
+function getRouteKey(route) {
+    return `${route.method} ${route.path}`;
+}
+
+
+/***/ }),
+
 /***/ 8143:
 /***/ ((__unused_webpack_module, exports) => {
 
@@ -30541,8 +30574,7 @@ run();
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.parseExpressRoutes = parseExpressRoutes;
-exports.getRouteKey = getRouteKey;
-const EXPRESS_ROUTE_PATTERN = /\b(app|router)\s*\.\s*(get|post|put|patch|delete|options|head)\s*\(\s*(["'`])([^"'`]+)\3/g;
+const EXPRESS_ROUTE_PATTERN = /\b(app|router)\s*\.\s*(get|post|put|patch|delete|options|head)\s*\(\s*(["'`])([^"'`]+)\3\s*,/g;
 function parseExpressRoutes(content, filename) {
     const routes = [];
     for (const match of content.matchAll(EXPRESS_ROUTE_PATTERN)) {
@@ -30561,8 +30593,59 @@ function parseExpressRoutes(content, filename) {
     }
     return routes;
 }
-function getRouteKey(route) {
-    return `${route.method} ${route.path}`;
+
+
+/***/ }),
+
+/***/ 8038:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.parseNestJsRoutes = parseNestJsRoutes;
+const CONTROLLER_PATTERN = /@Controller\s*\(\s*(?:(["'`])([^"'`]*)\1)?\s*\)/g;
+const ROUTE_PATTERN = /@(Get|Post|Put|Patch|Delete|Options|Head)\s*\(\s*(?:(["'`])([^"'`]*)\2)?\s*\)/g;
+function joinPaths(controllerPath, methodPath) {
+    const controller = controllerPath.replace(/^\/+|\/+$/g, "");
+    const method = methodPath.replace(/^\/+|\/+$/g, "");
+    const parts = [controller, method].filter(Boolean);
+    if (parts.length === 0) {
+        return "/";
+    }
+    return `/${parts.join("/")}`;
+}
+function parseNestJsRoutes(content, filename) {
+    const routes = [];
+    const controllers = [...content.matchAll(CONTROLLER_PATTERN)];
+    for (let index = 0; index < controllers.length; index++) {
+        const controller = controllers[index];
+        if (!controller) {
+            continue;
+        }
+        const controllerPath = controller[2] ?? "";
+        if (controllerPath.includes("${")) {
+            continue;
+        }
+        const sectionStart = (controller.index ?? 0) + controller[0].length;
+        const sectionEnd = controllers[index + 1]?.index ?? content.length;
+        const controllerSection = content.slice(sectionStart, sectionEnd);
+        for (const routeMatch of controllerSection.matchAll(ROUTE_PATTERN)) {
+            const methodName = routeMatch[1];
+            const methodPath = routeMatch[3] ?? "";
+            if (!methodName || methodPath.includes("${")) {
+                continue;
+            }
+            const method = methodName.toUpperCase();
+            routes.push({
+                method,
+                path: joinPaths(controllerPath, methodPath),
+                file: filename,
+                framework: "nestjs",
+            });
+        }
+    }
+    return routes;
 }
 
 
@@ -30575,6 +30658,7 @@ function getRouteKey(route) {
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.readFileAtRef = readFileAtRef;
+exports.listFilesAtRef = listFilesAtRef;
 const node_child_process_1 = __nccwpck_require__(1421);
 function readFileAtRef(ref, filename) {
     try {
@@ -30585,6 +30669,18 @@ function readFileAtRef(ref, filename) {
     }
     catch {
         return null;
+    }
+}
+function listFilesAtRef(ref) {
+    try {
+        const output = (0, node_child_process_1.execFileSync)("git", ["ls-tree", "-r", "--name-only", ref], {
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "ignore"],
+        });
+        return output.split(/\r?\n/).filter(Boolean);
+    }
+    catch {
+        return [];
     }
 }
 

@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 
-import { getRouteKey, parseExpressRoutes } from "../parsers/express-routes";
-import { readFileAtRef } from "../repository/git-file";
+import { getRouteKey, parseApiRoutes } from "../parsers/api-routes";
+import { listFilesAtRef, readFileAtRef } from "../repository/git-file";
 import type { DocumentationFinding } from "../types/finding";
 import type { RouteDefinition } from "../types/route";
 
@@ -26,6 +26,23 @@ function isRouteSourceFile(filename: string): boolean {
   );
 }
 
+function buildRouteInventory(ref: string): RouteDefinition[] {
+  const routes: RouteDefinition[] = [];
+  const files = listFilesAtRef(ref).filter(isRouteSourceFile);
+
+  for (const filename of files) {
+    const content = readFileAtRef(ref, filename);
+
+    if (!content) {
+      continue;
+    }
+
+    routes.push(...parseApiRoutes(content, filename));
+  }
+
+  return routes;
+}
+
 function documentationReferencesRoute(
   documentation: string,
   route: RouteDefinition,
@@ -47,51 +64,47 @@ export function detectStaleApiRoutes(
 ): DocumentationFinding[] {
   const findings: DocumentationFinding[] = [];
 
-  for (const file of changedFiles) {
-    if (!isRouteSourceFile(file.filename)) {
+  if (!changedFiles.some((file) => isRouteSourceFile(file.filename))) {
+    return findings;
+  }
+
+  const oldRoutes = buildRouteInventory(baseSha);
+  const currentRoutes = buildRouteInventory(headSha);
+  const currentRouteKeys = new Set(currentRoutes.map(getRouteKey));
+  const oldRoutesByKey = new Map<string, RouteDefinition>();
+
+  for (const route of oldRoutes) {
+    const key = getRouteKey(route);
+
+    if (!oldRoutesByKey.has(key)) {
+      oldRoutesByKey.set(key, route);
+    }
+  }
+
+  for (const [routeKey, oldRoute] of oldRoutesByKey) {
+    if (currentRouteKeys.has(routeKey)) {
       continue;
     }
 
-    const baseContent = readFileAtRef(baseSha, file.filename);
-    const headContent = readFileAtRef(headSha, file.filename);
-
-    const oldRoutes = baseContent
-      ? parseExpressRoutes(baseContent, file.filename)
-      : [];
-
-    const currentRoutes = headContent
-      ? parseExpressRoutes(headContent, file.filename)
-      : [];
-
-    const currentRouteKeys = new Set(currentRoutes.map(getRouteKey));
-
-    for (const oldRoute of oldRoutes) {
-      const routeKey = getRouteKey(oldRoute);
-
-      if (currentRouteKeys.has(routeKey)) {
+    for (const documentationFile of documentationFiles) {
+      if (!fs.existsSync(documentationFile)) {
         continue;
       }
 
-      for (const documentationFile of documentationFiles) {
-        if (!fs.existsSync(documentationFile)) {
-          continue;
-        }
+      const documentation = fs.readFileSync(documentationFile, "utf8");
 
-        const documentation = fs.readFileSync(documentationFile, "utf8");
-
-        if (!documentationReferencesRoute(documentation, oldRoute)) {
-          continue;
-        }
-
-        findings.push({
-          type: "stale-api-route",
-          documentationFile,
-          reference: routeKey,
-          message:
-            `${documentationFile} references "${routeKey}", but that API route ` +
-            `no longer exists in ${file.filename}.`,
-        });
+      if (!documentationReferencesRoute(documentation, oldRoute)) {
+        continue;
       }
+
+      findings.push({
+        type: "stale-api-route",
+        documentationFile,
+        reference: routeKey,
+        message:
+          `${documentationFile} references "${routeKey}", but that API route ` +
+          "no longer exists in the current codebase.",
+      });
     }
   }
 
