@@ -248239,6 +248239,7 @@ exports.DEFAULT_CONFIG = {
         confidenceThreshold: 0.8,
         provider: "gemini",
         model: "gemini-3.6-flash",
+        maxCalls: 10,
     },
 };
 
@@ -248307,9 +248308,14 @@ function parseConfig(raw) {
         throw new Error(`Invalid DocDrift mode: ${parsed.mode}`);
     }
     const confidence = parsed.semantic?.confidenceThreshold;
+    const maxCalls = parsed.semantic?.maxCalls;
     if (confidence !== undefined &&
         (typeof confidence !== "number" || confidence < 0 || confidence > 1)) {
         throw new Error("semantic.confidenceThreshold must be between 0 and 1");
+    }
+    if (maxCalls !== undefined &&
+        (!Number.isInteger(maxCalls) || maxCalls < 1 || maxCalls > 50)) {
+        throw new Error("semantic.maxCalls must be an integer between 1 and 50");
     }
     if (parsed.semantic?.provider !== undefined &&
         parsed.semantic.provider !== "gemini") {
@@ -248338,6 +248344,7 @@ function parseConfig(raw) {
             confidenceThreshold: confidence ?? defaults_1.DEFAULT_CONFIG.semantic.confidenceThreshold,
             provider: parsed.semantic?.provider ?? defaults_1.DEFAULT_CONFIG.semantic.provider,
             model: parsed.semantic?.model ?? defaults_1.DEFAULT_CONFIG.semantic.model,
+            maxCalls: maxCalls ?? defaults_1.DEFAULT_CONFIG.semantic.maxCalls,
         },
     };
 }
@@ -248802,10 +248809,43 @@ function describeRoute(route) {
 /***/ }),
 
 /***/ 295:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
 
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.truncate = truncate;
 exports.discoverSemanticCandidates = discoverSemanticCandidates;
@@ -248815,8 +248855,25 @@ const git_file_1 = __nccwpck_require__(5631);
 const candidates_1 = __nccwpck_require__(2920);
 const enclosing_symbols_1 = __nccwpck_require__(5214);
 const identifiers_1 = __nccwpck_require__(724);
-const MAX_CODE_CHARS = 12_000;
-const MAX_DOC_CHARS = 8_000;
+const timeout_1 = __nccwpck_require__(1395);
+const MAX_CODE_BEFORE_CHARS = 10_000;
+const MAX_CODE_AFTER_CHARS = 10_000;
+const MAX_DOCUMENTATION_CHARS = 6_000;
+const DEFAULT_TIMEOUT_MILLISECONDS = 30_000;
+function candidateFingerprint(candidate) {
+    return [
+        candidate.filename,
+        candidate.documentationFile,
+        candidate.section.startLine,
+    ].join(":");
+}
+function safeSemanticErrorMessage(error) {
+    if (error instanceof Error &&
+        error.message.startsWith("Semantic analysis timed out after ")) {
+        return error.message;
+    }
+    return "Provider request failed or returned an invalid response.";
+}
 function truncate(value, limit) {
     if (value.length <= limit) {
         return value;
@@ -248864,50 +248921,89 @@ function discoverSemanticCandidates(enabled, changedCodeFiles, documentationFile
     }
     return candidates;
 }
-async function analyzeSemanticCandidates(candidates, provider, confidenceThreshold, baseSha, headSha) {
+async function analyzeSemanticCandidates(candidates, provider, confidenceThreshold, baseSha, headSha, maxCalls, timeoutMilliseconds = DEFAULT_TIMEOUT_MILLISECONDS) {
     const findings = [];
+    const seen = new Set();
+    const uniqueCandidates = candidates.filter((candidate) => {
+        const fingerprint = candidateFingerprint(candidate);
+        if (seen.has(fingerprint)) {
+            return false;
+        }
+        seen.add(fingerprint);
+        return true;
+    });
+    const stats = {
+        candidateSections: candidates.length,
+        uniqueCandidates: uniqueCandidates.length,
+        calls: 0,
+        findings: 0,
+        errors: 0,
+    };
     const sourceCache = new Map();
-    for (const candidate of candidates) {
+    for (const candidate of uniqueCandidates) {
+        if (stats.calls >= maxCalls) {
+            core.warning(`Semantic analysis reached the configured limit of ${maxCalls} AI calls.`);
+            break;
+        }
         let source = sourceCache.get(candidate.filename);
         if (!source) {
+            const rawCodeBefore = (0, git_file_1.readFileAtRef)(baseSha, candidate.filename) ?? "";
+            const rawCodeAfter = (0, git_file_1.readFileAtRef)(headSha, candidate.filename) ?? "";
+            if (rawCodeBefore.length > MAX_CODE_BEFORE_CHARS ||
+                rawCodeAfter.length > MAX_CODE_AFTER_CHARS) {
+                core.debug(`Semantic input truncated for ${candidate.filename}`);
+            }
             source = {
-                codeBefore: truncate((0, git_file_1.readFileAtRef)(baseSha, candidate.filename) ?? "", MAX_CODE_CHARS),
-                codeAfter: truncate((0, git_file_1.readFileAtRef)(headSha, candidate.filename) ?? "", MAX_CODE_CHARS),
+                codeBefore: truncate(rawCodeBefore, MAX_CODE_BEFORE_CHARS),
+                codeAfter: truncate(rawCodeAfter, MAX_CODE_AFTER_CHARS),
             };
             sourceCache.set(candidate.filename, source);
         }
-        const result = await provider.analyze({
-            filename: candidate.filename,
-            codeBefore: source.codeBefore,
-            codeAfter: source.codeAfter,
-            documentationFile: candidate.documentationFile,
-            documentationSection: truncate(candidate.section.content, MAX_DOC_CHARS),
-            sectionHeading: candidate.section.heading,
-        });
-        if (!result.stale || result.confidence < confidenceThreshold) {
-            continue;
+        if (candidate.section.content.length > MAX_DOCUMENTATION_CHARS) {
+            core.debug(`Semantic input truncated for ${candidate.documentationFile}`);
         }
-        findings.push({
-            type: "semantic-drift",
-            documentationFile: candidate.documentationFile,
-            reference: result.staleText ?? candidate.section.heading,
-            message: result.reason,
-            confidence: result.confidence,
-            locations: [
-                {
-                    line: candidate.section.startLine,
-                    section: [candidate.section.heading],
-                },
-            ],
-            ...(result.suggestedText
-                ? {
-                    suggestion: result.suggestedText,
-                }
-                : {}),
-        });
+        stats.calls++;
+        try {
+            const result = await (0, timeout_1.withTimeout)(provider.analyze({
+                filename: candidate.filename,
+                codeBefore: source.codeBefore,
+                codeAfter: source.codeAfter,
+                documentationFile: candidate.documentationFile,
+                documentationSection: truncate(candidate.section.content, MAX_DOCUMENTATION_CHARS),
+                sectionHeading: candidate.section.heading,
+            }), timeoutMilliseconds);
+            if (!result.stale || result.confidence < confidenceThreshold) {
+                continue;
+            }
+            findings.push({
+                type: "semantic-drift",
+                documentationFile: candidate.documentationFile,
+                reference: result.staleText ?? candidate.section.heading,
+                message: result.reason,
+                confidence: result.confidence,
+                locations: [
+                    {
+                        line: candidate.section.startLine,
+                        section: [candidate.section.heading],
+                    },
+                ],
+                ...(result.suggestedText
+                    ? {
+                        suggestion: result.suggestedText,
+                    }
+                    : {}),
+            });
+        }
+        catch (error) {
+            stats.errors++;
+            core.warning(`Semantic analysis skipped for ${candidate.documentationFile}: ` +
+                safeSemanticErrorMessage(error));
+        }
     }
-    return findings;
+    stats.findings = findings.length;
+    return { findings, stats };
 }
+const core = __importStar(__nccwpck_require__(7484));
 
 
 /***/ }),
@@ -249325,9 +249421,18 @@ async function run() {
                 core.info(`Matched: ${candidate.documentationFile} → ${candidate.section.heading} ` +
                     `(lines ${candidate.section.startLine}-${candidate.section.endLine})`);
             }
-            const analyzedFindings = await (0, semantic_1.analyzeSemanticCandidates)(semanticCandidates, semanticProvider, config.semantic.confidenceThreshold, baseSha, headSha);
+            const semanticAnalysis = await (0, semantic_1.analyzeSemanticCandidates)(semanticCandidates, semanticProvider, config.semantic.confidenceThreshold, baseSha, headSha, config.semantic.maxCalls);
+            core.info("");
+            core.info("ðŸ§  Semantic Analysis");
+            core.info(`Changed code files: ${changedCodeForAnalysis.length}`);
+            core.info(`Candidate sections: ${semanticAnalysis.stats.candidateSections}`);
+            core.info(`Unique candidates: ${semanticAnalysis.stats.uniqueCandidates}`);
+            core.info(`Gemini calls: ${semanticAnalysis.stats.calls}`);
+            core.info(`Findings: ${semanticAnalysis.stats.findings}`);
+            core.info(`Skipped/errors: ${semanticAnalysis.stats.errors +
+                (semanticAnalysis.stats.uniqueCandidates - semanticAnalysis.stats.calls)}`);
             const existingFingerprints = new Set(deterministicFindings.map(findingFingerprint));
-            for (const finding of analyzedFindings) {
+            for (const finding of semanticAnalysis.findings) {
                 const fingerprint = findingFingerprint(finding);
                 if (existingFingerprints.has(fingerprint)) {
                     continue;
@@ -249859,6 +249964,33 @@ exports.SemanticDriftResultSchema = zod_1.z.object({
     staleText: zod_1.z.string().optional(),
     suggestedText: zod_1.z.string().optional(),
 });
+
+
+/***/ }),
+
+/***/ 1395:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.withTimeout = withTimeout;
+async function withTimeout(promise, milliseconds) {
+    let timeout;
+    const timeoutPromise = new Promise((_, reject) => {
+        timeout = setTimeout(() => {
+            reject(new Error(`Semantic analysis timed out after ${milliseconds}ms`));
+        }, milliseconds);
+    });
+    try {
+        return await Promise.race([promise, timeoutPromise]);
+    }
+    finally {
+        if (timeout) {
+            clearTimeout(timeout);
+        }
+    }
+}
 
 
 /***/ }),

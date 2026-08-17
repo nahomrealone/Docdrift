@@ -216,19 +216,36 @@ async function run() {
         );
       }
 
-      const analyzedFindings = await analyzeSemanticCandidates(
+      const semanticAnalysis = await analyzeSemanticCandidates(
         semanticCandidates,
         semanticProvider,
         config.semantic.confidenceThreshold,
         baseSha,
         headSha,
+        config.semantic.maxCalls,
+      );
+
+      core.info("");
+      core.info("ðŸ§  Semantic Analysis");
+      core.info(`Changed code files: ${changedCodeForAnalysis.length}`);
+      core.info(
+        `Candidate sections: ${semanticAnalysis.stats.candidateSections}`,
+      );
+      core.info(`Unique candidates: ${semanticAnalysis.stats.uniqueCandidates}`);
+      core.info(`Gemini calls: ${semanticAnalysis.stats.calls}`);
+      core.info(`Findings: ${semanticAnalysis.stats.findings}`);
+      core.info(
+        `Skipped/errors: ${
+          semanticAnalysis.stats.errors +
+          (semanticAnalysis.stats.uniqueCandidates - semanticAnalysis.stats.calls)
+        }`,
       );
 
       const existingFingerprints = new Set(
         deterministicFindings.map(findingFingerprint),
       );
 
-      for (const finding of analyzedFindings) {
+      for (const finding of semanticAnalysis.findings) {
         const fingerprint = findingFingerprint(finding);
 
         if (existingFingerprints.has(fingerprint)) {

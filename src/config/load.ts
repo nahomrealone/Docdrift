@@ -29,6 +29,7 @@ export function parseConfig(raw: string): DocDriftConfig {
   }
 
   const confidence = parsed.semantic?.confidenceThreshold;
+  const maxCalls = parsed.semantic?.maxCalls;
 
   if (
     confidence !== undefined &&
@@ -36,6 +37,15 @@ export function parseConfig(raw: string): DocDriftConfig {
   ) {
     throw new Error(
       "semantic.confidenceThreshold must be between 0 and 1",
+    );
+  }
+
+  if (
+    maxCalls !== undefined &&
+    (!Number.isInteger(maxCalls) || maxCalls < 1 || maxCalls > 50)
+  ) {
+    throw new Error(
+      "semantic.maxCalls must be an integer between 1 and 50",
     );
   }
 
@@ -78,6 +88,7 @@ export function parseConfig(raw: string): DocDriftConfig {
       provider:
         parsed.semantic?.provider ?? DEFAULT_CONFIG.semantic.provider,
       model: parsed.semantic?.model ?? DEFAULT_CONFIG.semantic.model,
+      maxCalls: maxCalls ?? DEFAULT_CONFIG.semantic.maxCalls,
     },
   };
 }
