@@ -5,6 +5,7 @@ import {
 } from "../documentation/sections";
 import { readFileAtRef } from "../repository/git-file";
 import { findCandidateSections } from "../semantic/candidates";
+import { extractChangedSymbolContexts } from "../semantic/changed-symbol-contexts";
 import {
   extractEnclosingSymbols,
   splitIdentifier,
@@ -14,8 +15,8 @@ import type { SemanticProvider } from "../semantic/provider";
 import { withTimeout } from "../semantic/timeout";
 import type { DocumentationFinding } from "../types/finding";
 
-const MAX_CODE_BEFORE_CHARS = 10_000;
-const MAX_CODE_AFTER_CHARS = 10_000;
+const MAX_FALLBACK_CODE_CHARS = 6_000;
+const MAX_SYMBOL_CHARS = 12_000;
 const MAX_DOCUMENTATION_CHARS = 6_000;
 const DEFAULT_TIMEOUT_MILLISECONDS = 30_000;
 
@@ -26,6 +27,9 @@ interface ChangedCodeFile {
 
 export interface SemanticCandidate {
   filename: string;
+  symbol?: string;
+  codeBefore?: string;
+  codeAfter?: string;
   identifiers: string[];
   documentationFile: string;
   section: MarkdownSection;
@@ -34,6 +38,7 @@ export interface SemanticCandidate {
 export interface SemanticAnalysisStats {
   candidateSections: number;
   uniqueCandidates: number;
+  affectedSymbols: number;
   calls: number;
   findings: number;
   errors: number;
@@ -47,6 +52,7 @@ export interface SemanticAnalysisResult {
 function candidateFingerprint(candidate: SemanticCandidate): string {
   return [
     candidate.filename,
+    candidate.symbol ?? "file",
     candidate.documentationFile,
     candidate.section.startLine,
   ].join(":");
@@ -108,29 +114,51 @@ export function discoverSemanticCandidates(
       codeBefore,
       codeAfter,
     );
-    const identifiers = [
-      ...new Set(
-        [...rawIdentifiers, ...enclosingSymbols].flatMap((identifier) => [
-          identifier,
-          splitIdentifier(identifier),
-        ]),
-      ),
-    ];
+    const symbolContexts = extractChangedSymbolContexts(
+      file.filename,
+      file.changedLines,
+      codeBefore,
+      codeAfter,
+    );
+    const contexts = symbolContexts.length > 0 ? symbolContexts : [null];
 
-    if (identifiers.length === 0) {
-      continue;
-    }
+    for (const symbolContext of contexts) {
+      const symbolNames = symbolContext
+        ? [symbolContext.before?.name, symbolContext.after?.name].filter(
+            (name): name is string => Boolean(name),
+          )
+        : enclosingSymbols;
+      const identifiers = [
+        ...new Set(
+          [...rawIdentifiers, ...symbolNames].flatMap((identifier) => [
+            identifier,
+            splitIdentifier(identifier),
+          ]),
+        ),
+      ];
 
-    for (const [documentationFile, sections] of documentationSections) {
-      const matchingSections = findCandidateSections(sections, identifiers);
+      if (identifiers.length === 0) {
+        continue;
+      }
 
-      for (const section of matchingSections) {
-        candidates.push({
-          filename: file.filename,
-          identifiers,
-          documentationFile,
-          section,
-        });
+      for (const [documentationFile, sections] of documentationSections) {
+        const matchingSections = findCandidateSections(sections, identifiers);
+
+        for (const section of matchingSections) {
+          candidates.push({
+            filename: file.filename,
+            ...(symbolNames[0] ? { symbol: symbolNames[0] } : {}),
+            ...(symbolContext?.before
+              ? { codeBefore: symbolContext.before.content }
+              : {}),
+            ...(symbolContext?.after
+              ? { codeAfter: symbolContext.after.content }
+              : {}),
+            identifiers,
+            documentationFile,
+            section,
+          });
+        }
       }
     }
   }
@@ -162,6 +190,11 @@ export async function analyzeSemanticCandidates(
   const stats: SemanticAnalysisStats = {
     candidateSections: candidates.length,
     uniqueCandidates: uniqueCandidates.length,
+    affectedSymbols: new Set(
+      uniqueCandidates.flatMap((candidate) =>
+        candidate.symbol ? [candidate.symbol] : [],
+      ),
+    ).size,
     calls: 0,
     findings: 0,
     errors: 0,
@@ -186,15 +219,15 @@ export async function analyzeSemanticCandidates(
       const rawCodeAfter = readFileAtRef(headSha, candidate.filename) ?? "";
 
       if (
-        rawCodeBefore.length > MAX_CODE_BEFORE_CHARS ||
-        rawCodeAfter.length > MAX_CODE_AFTER_CHARS
+        rawCodeBefore.length > MAX_FALLBACK_CODE_CHARS ||
+        rawCodeAfter.length > MAX_FALLBACK_CODE_CHARS
       ) {
         core.debug(`Semantic input truncated for ${candidate.filename}`);
       }
 
       source = {
-        codeBefore: truncate(rawCodeBefore, MAX_CODE_BEFORE_CHARS),
-        codeAfter: truncate(rawCodeAfter, MAX_CODE_AFTER_CHARS),
+        codeBefore: truncate(rawCodeBefore, MAX_FALLBACK_CODE_CHARS),
+        codeAfter: truncate(rawCodeAfter, MAX_FALLBACK_CODE_CHARS),
       };
       sourceCache.set(candidate.filename, source);
     }
@@ -211,8 +244,14 @@ export async function analyzeSemanticCandidates(
       const result = await withTimeout(
         provider.analyze({
           filename: candidate.filename,
-          codeBefore: source.codeBefore,
-          codeAfter: source.codeAfter,
+          codeBefore: truncate(
+            candidate.codeBefore ?? source.codeBefore,
+            MAX_SYMBOL_CHARS,
+          ),
+          codeAfter: truncate(
+            candidate.codeAfter ?? source.codeAfter,
+            MAX_SYMBOL_CHARS,
+          ),
           documentationFile: candidate.documentationFile,
           documentationSection: truncate(
             candidate.section.content,

@@ -209,6 +209,7 @@ async function run() {
       for (const candidate of semanticCandidates) {
         core.info("");
         core.info(`Changed: ${candidate.filename}`);
+        core.info(`Symbol: ${candidate.symbol ?? "file context"}`);
         core.info(`Identifiers: ${candidate.identifiers.join(", ")}`);
         core.info(
           `Matched: ${candidate.documentationFile} → ${candidate.section.heading} ` +
@@ -228,6 +229,7 @@ async function run() {
       core.info("");
       core.info("ðŸ§  Semantic Analysis");
       core.info(`Changed code files: ${changedCodeForAnalysis.length}`);
+      core.info(`Affected symbols: ${semanticAnalysis.stats.affectedSymbols}`);
       core.info(
         `Candidate sections: ${semanticAnalysis.stats.candidateSections}`,
       );

@@ -248853,16 +248853,18 @@ exports.analyzeSemanticCandidates = analyzeSemanticCandidates;
 const sections_1 = __nccwpck_require__(6192);
 const git_file_1 = __nccwpck_require__(5631);
 const candidates_1 = __nccwpck_require__(2920);
+const changed_symbol_contexts_1 = __nccwpck_require__(9794);
 const enclosing_symbols_1 = __nccwpck_require__(5214);
 const identifiers_1 = __nccwpck_require__(724);
 const timeout_1 = __nccwpck_require__(1395);
-const MAX_CODE_BEFORE_CHARS = 10_000;
-const MAX_CODE_AFTER_CHARS = 10_000;
+const MAX_FALLBACK_CODE_CHARS = 6_000;
+const MAX_SYMBOL_CHARS = 12_000;
 const MAX_DOCUMENTATION_CHARS = 6_000;
 const DEFAULT_TIMEOUT_MILLISECONDS = 30_000;
 function candidateFingerprint(candidate) {
     return [
         candidate.filename,
+        candidate.symbol ?? "file",
         candidate.documentationFile,
         candidate.section.startLine,
     ].join(":");
@@ -248898,24 +248900,37 @@ function discoverSemanticCandidates(enabled, changedCodeFiles, documentationFile
         const codeAfter = (0, git_file_1.readFileAtRef)(headSha, file.filename) ?? "";
         const rawIdentifiers = (0, identifiers_1.extractChangedIdentifiers)(file.changedLines);
         const enclosingSymbols = (0, enclosing_symbols_1.extractEnclosingSymbols)(file.changedLines, file.filename, codeBefore, codeAfter);
-        const identifiers = [
-            ...new Set([...rawIdentifiers, ...enclosingSymbols].flatMap((identifier) => [
-                identifier,
-                (0, enclosing_symbols_1.splitIdentifier)(identifier),
-            ])),
-        ];
-        if (identifiers.length === 0) {
-            continue;
-        }
-        for (const [documentationFile, sections] of documentationSections) {
-            const matchingSections = (0, candidates_1.findCandidateSections)(sections, identifiers);
-            for (const section of matchingSections) {
-                candidates.push({
-                    filename: file.filename,
-                    identifiers,
-                    documentationFile,
-                    section,
-                });
+        const symbolContexts = (0, changed_symbol_contexts_1.extractChangedSymbolContexts)(file.filename, file.changedLines, codeBefore, codeAfter);
+        const contexts = symbolContexts.length > 0 ? symbolContexts : [null];
+        for (const symbolContext of contexts) {
+            const symbolNames = symbolContext
+                ? [symbolContext.before?.name, symbolContext.after?.name].filter((name) => Boolean(name))
+                : enclosingSymbols;
+            const identifiers = [
+                ...new Set([...rawIdentifiers, ...symbolNames].flatMap((identifier) => [
+                    identifier,
+                    (0, enclosing_symbols_1.splitIdentifier)(identifier),
+                ])),
+            ];
+            if (identifiers.length === 0)
+                continue;
+            for (const [documentationFile, sections] of documentationSections) {
+                const matchingSections = (0, candidates_1.findCandidateSections)(sections, identifiers);
+                for (const section of matchingSections) {
+                    candidates.push({
+                        filename: file.filename,
+                        ...(symbolNames[0] ? { symbol: symbolNames[0] } : {}),
+                        ...(symbolContext?.before
+                            ? { codeBefore: symbolContext.before.content }
+                            : {}),
+                        ...(symbolContext?.after
+                            ? { codeAfter: symbolContext.after.content }
+                            : {}),
+                        identifiers,
+                        documentationFile,
+                        section,
+                    });
+                }
             }
         }
     }
@@ -248935,6 +248950,7 @@ async function analyzeSemanticCandidates(candidates, provider, confidenceThresho
     const stats = {
         candidateSections: candidates.length,
         uniqueCandidates: uniqueCandidates.length,
+        affectedSymbols: new Set(uniqueCandidates.flatMap((candidate) => candidate.symbol ? [candidate.symbol] : [])).size,
         calls: 0,
         findings: 0,
         errors: 0,
@@ -248949,13 +248965,13 @@ async function analyzeSemanticCandidates(candidates, provider, confidenceThresho
         if (!source) {
             const rawCodeBefore = (0, git_file_1.readFileAtRef)(baseSha, candidate.filename) ?? "";
             const rawCodeAfter = (0, git_file_1.readFileAtRef)(headSha, candidate.filename) ?? "";
-            if (rawCodeBefore.length > MAX_CODE_BEFORE_CHARS ||
-                rawCodeAfter.length > MAX_CODE_AFTER_CHARS) {
+            if (rawCodeBefore.length > MAX_FALLBACK_CODE_CHARS ||
+                rawCodeAfter.length > MAX_FALLBACK_CODE_CHARS) {
                 core.debug(`Semantic input truncated for ${candidate.filename}`);
             }
             source = {
-                codeBefore: truncate(rawCodeBefore, MAX_CODE_BEFORE_CHARS),
-                codeAfter: truncate(rawCodeAfter, MAX_CODE_AFTER_CHARS),
+                codeBefore: truncate(rawCodeBefore, MAX_FALLBACK_CODE_CHARS),
+                codeAfter: truncate(rawCodeAfter, MAX_FALLBACK_CODE_CHARS),
             };
             sourceCache.set(candidate.filename, source);
         }
@@ -248966,8 +248982,8 @@ async function analyzeSemanticCandidates(candidates, provider, confidenceThresho
         try {
             const result = await (0, timeout_1.withTimeout)(provider.analyze({
                 filename: candidate.filename,
-                codeBefore: source.codeBefore,
-                codeAfter: source.codeAfter,
+                codeBefore: truncate(candidate.codeBefore ?? source.codeBefore, MAX_SYMBOL_CHARS),
+                codeAfter: truncate(candidate.codeAfter ?? source.codeAfter, MAX_SYMBOL_CHARS),
                 documentationFile: candidate.documentationFile,
                 documentationSection: truncate(candidate.section.content, MAX_DOCUMENTATION_CHARS),
                 sectionHeading: candidate.section.heading,
@@ -249417,6 +249433,7 @@ async function run() {
             for (const candidate of semanticCandidates) {
                 core.info("");
                 core.info(`Changed: ${candidate.filename}`);
+                core.info(`Symbol: ${candidate.symbol ?? "file context"}`);
                 core.info(`Identifiers: ${candidate.identifiers.join(", ")}`);
                 core.info(`Matched: ${candidate.documentationFile} → ${candidate.section.heading} ` +
                     `(lines ${candidate.section.startLine}-${candidate.section.endLine})`);
@@ -249425,6 +249442,7 @@ async function run() {
             core.info("");
             core.info("ðŸ§  Semantic Analysis");
             core.info(`Changed code files: ${changedCodeForAnalysis.length}`);
+            core.info(`Affected symbols: ${semanticAnalysis.stats.affectedSymbols}`);
             core.info(`Candidate sections: ${semanticAnalysis.stats.candidateSections}`);
             core.info(`Unique candidates: ${semanticAnalysis.stats.uniqueCandidates}`);
             core.info(`Gemini calls: ${semanticAnalysis.stats.calls}`);
@@ -249666,6 +249684,59 @@ function findCandidateSections(sections, identifiers) {
         const haystack = `${section.heading}\n${section.content}`.toLowerCase();
         return identifiers.some((identifier) => haystack.includes(identifier.toLowerCase()));
     });
+}
+
+
+/***/ }),
+
+/***/ 9794:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.pairSymbolContexts = pairSymbolContexts;
+exports.extractChangedSymbolContexts = extractChangedSymbolContexts;
+const symbol_context_1 = __nccwpck_require__(4088);
+function unique(contexts) {
+    const seen = new Set();
+    return contexts.filter((context) => {
+        const key = `${context.name}:${context.startLine}:${context.endLine}`;
+        if (seen.has(key))
+            return false;
+        seen.add(key);
+        return true;
+    });
+}
+function pairSymbolContexts(before, after) {
+    const beforeByName = new Map(before.map((context) => [context.name, context]));
+    const afterByName = new Map(after.map((context) => [context.name, context]));
+    const names = new Set([...beforeByName.keys(), ...afterByName.keys()]);
+    return [...names].map((name) => {
+        const beforeContext = beforeByName.get(name);
+        const afterContext = afterByName.get(name);
+        return {
+            ...(beforeContext ? { before: beforeContext } : {}),
+            ...(afterContext ? { after: afterContext } : {}),
+        };
+    });
+}
+function extractChangedSymbolContexts(filename, changedLines, codeBefore, codeAfter) {
+    const before = [];
+    const after = [];
+    for (const line of changedLines) {
+        if (line.type === "removed" && line.oldLineNumber !== undefined) {
+            const context = (0, symbol_context_1.findEnclosingSymbolContext)(codeBefore, filename, line.oldLineNumber);
+            if (context)
+                before.push(context);
+        }
+        if (line.type === "added" && line.newLineNumber !== undefined) {
+            const context = (0, symbol_context_1.findEnclosingSymbolContext)(codeAfter, filename, line.newLineNumber);
+            if (context)
+                after.push(context);
+        }
+    }
+    return pairSymbolContexts(unique(before), unique(after));
 }
 
 
@@ -249964,6 +250035,103 @@ exports.SemanticDriftResultSchema = zod_1.z.object({
     staleText: zod_1.z.string().optional(),
     suggestedText: zod_1.z.string().optional(),
 });
+
+
+/***/ }),
+
+/***/ 4088:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.findEnclosingSymbolContext = findEnclosingSymbolContext;
+const typescript_1 = __importDefault(__nccwpck_require__(5672));
+function getScriptKind(filename) {
+    if (filename.endsWith(".tsx"))
+        return typescript_1.default.ScriptKind.TSX;
+    if (filename.endsWith(".jsx"))
+        return typescript_1.default.ScriptKind.JSX;
+    if (/\.(?:js|mjs|cjs)$/.test(filename))
+        return typescript_1.default.ScriptKind.JS;
+    return typescript_1.default.ScriptKind.TS;
+}
+function describeDeclaration(node) {
+    if (typescript_1.default.isFunctionDeclaration(node) && node.name) {
+        return { name: node.name.text, kind: "function" };
+    }
+    if (typescript_1.default.isMethodDeclaration(node) && node.name) {
+        return { name: node.name.getText(), kind: "method" };
+    }
+    if (typescript_1.default.isClassDeclaration(node) && node.name) {
+        return { name: node.name.text, kind: "class" };
+    }
+    if (typescript_1.default.isInterfaceDeclaration(node)) {
+        return { name: node.name.text, kind: "interface" };
+    }
+    if (typescript_1.default.isTypeAliasDeclaration(node)) {
+        return { name: node.name.text, kind: "type" };
+    }
+    if (typescript_1.default.isEnumDeclaration(node)) {
+        return { name: node.name.text, kind: "enum" };
+    }
+    if (typescript_1.default.isVariableDeclaration(node) &&
+        typescript_1.default.isIdentifier(node.name) &&
+        node.initializer &&
+        (typescript_1.default.isArrowFunction(node.initializer) ||
+            typescript_1.default.isFunctionExpression(node.initializer))) {
+        return { name: node.name.text, kind: "function" };
+    }
+    if (typescript_1.default.isPropertyDeclaration(node) &&
+        node.name &&
+        node.initializer &&
+        (typescript_1.default.isArrowFunction(node.initializer) ||
+            typescript_1.default.isFunctionExpression(node.initializer))) {
+        return { name: node.name.getText(), kind: "method" };
+    }
+    return null;
+}
+function findEnclosingSymbolContext(content, filename, lineNumber) {
+    if (lineNumber < 1)
+        return null;
+    const sourceFile = typescript_1.default.createSourceFile(filename, content, typescript_1.default.ScriptTarget.Latest, true, getScriptKind(filename));
+    const lastLine = sourceFile.getLineAndCharacterOfPosition(sourceFile.getEnd()).line + 1;
+    if (lineNumber > lastLine)
+        return null;
+    const position = sourceFile.getPositionOfLineAndCharacter(lineNumber - 1, 0);
+    let bestName = null;
+    let bestKind = null;
+    let bestStart = 0;
+    let bestEnd = 0;
+    let bestSize = Number.POSITIVE_INFINITY;
+    function visit(node) {
+        if (position < node.getFullStart() || position > node.getEnd())
+            return;
+        const description = describeDeclaration(node);
+        const size = node.getEnd() - node.getStart(sourceFile);
+        if (description && size < bestSize) {
+            bestName = description.name;
+            bestKind = description.kind;
+            bestStart = node.getStart(sourceFile);
+            bestEnd = node.getEnd();
+            bestSize = size;
+        }
+        typescript_1.default.forEachChild(node, visit);
+    }
+    visit(sourceFile);
+    if (!bestName || !bestKind)
+        return null;
+    return {
+        name: bestName,
+        kind: bestKind,
+        startLine: sourceFile.getLineAndCharacterOfPosition(bestStart).line + 1,
+        endLine: sourceFile.getLineAndCharacterOfPosition(bestEnd).line + 1,
+        content: content.slice(bestStart, bestEnd),
+    };
+}
 
 
 /***/ }),

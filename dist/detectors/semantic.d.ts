@@ -8,6 +8,9 @@ interface ChangedCodeFile {
 }
 export interface SemanticCandidate {
     filename: string;
+    symbol?: string;
+    codeBefore?: string;
+    codeAfter?: string;
     identifiers: string[];
     documentationFile: string;
     section: MarkdownSection;
@@ -15,6 +18,7 @@ export interface SemanticCandidate {
 export interface SemanticAnalysisStats {
     candidateSections: number;
     uniqueCandidates: number;
+    affectedSymbols: number;
     calls: number;
     findings: number;
     errors: number;
