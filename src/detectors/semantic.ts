@@ -11,10 +11,13 @@ import {
 } from "../semantic/enclosing-symbols";
 import { extractChangedIdentifiers } from "../semantic/identifiers";
 import type { SemanticProvider } from "../semantic/provider";
+import { withTimeout } from "../semantic/timeout";
 import type { DocumentationFinding } from "../types/finding";
 
-const MAX_CODE_CHARS = 12_000;
-const MAX_DOC_CHARS = 8_000;
+const MAX_CODE_BEFORE_CHARS = 10_000;
+const MAX_CODE_AFTER_CHARS = 10_000;
+const MAX_DOCUMENTATION_CHARS = 6_000;
+const DEFAULT_TIMEOUT_MILLISECONDS = 30_000;
 
 interface ChangedCodeFile {
   filename: string;
@@ -26,6 +29,38 @@ export interface SemanticCandidate {
   identifiers: string[];
   documentationFile: string;
   section: MarkdownSection;
+}
+
+export interface SemanticAnalysisStats {
+  candidateSections: number;
+  uniqueCandidates: number;
+  calls: number;
+  findings: number;
+  errors: number;
+}
+
+export interface SemanticAnalysisResult {
+  findings: DocumentationFinding[];
+  stats: SemanticAnalysisStats;
+}
+
+function candidateFingerprint(candidate: SemanticCandidate): string {
+  return [
+    candidate.filename,
+    candidate.documentationFile,
+    candidate.section.startLine,
+  ].join(":");
+}
+
+function safeSemanticErrorMessage(error: unknown): string {
+  if (
+    error instanceof Error &&
+    error.message.startsWith("Semantic analysis timed out after ")
+  ) {
+    return error.message;
+  }
+
+  return "Provider request failed or returned an invalid response.";
 }
 
 export function truncate(value: string, limit: number): string {
@@ -109,62 +144,117 @@ export async function analyzeSemanticCandidates(
   confidenceThreshold: number,
   baseSha: string,
   headSha: string,
-): Promise<DocumentationFinding[]> {
+  maxCalls: number,
+  timeoutMilliseconds = DEFAULT_TIMEOUT_MILLISECONDS,
+): Promise<SemanticAnalysisResult> {
   const findings: DocumentationFinding[] = [];
+  const seen = new Set<string>();
+  const uniqueCandidates = candidates.filter((candidate) => {
+    const fingerprint = candidateFingerprint(candidate);
+
+    if (seen.has(fingerprint)) {
+      return false;
+    }
+
+    seen.add(fingerprint);
+    return true;
+  });
+  const stats: SemanticAnalysisStats = {
+    candidateSections: candidates.length,
+    uniqueCandidates: uniqueCandidates.length,
+    calls: 0,
+    findings: 0,
+    errors: 0,
+  };
   const sourceCache = new Map<
     string,
     { codeBefore: string; codeAfter: string }
   >();
 
-  for (const candidate of candidates) {
+  for (const candidate of uniqueCandidates) {
+    if (stats.calls >= maxCalls) {
+      core.warning(
+        `Semantic analysis reached the configured limit of ${maxCalls} AI calls.`,
+      );
+      break;
+    }
+
     let source = sourceCache.get(candidate.filename);
 
     if (!source) {
+      const rawCodeBefore = readFileAtRef(baseSha, candidate.filename) ?? "";
+      const rawCodeAfter = readFileAtRef(headSha, candidate.filename) ?? "";
+
+      if (
+        rawCodeBefore.length > MAX_CODE_BEFORE_CHARS ||
+        rawCodeAfter.length > MAX_CODE_AFTER_CHARS
+      ) {
+        core.debug(`Semantic input truncated for ${candidate.filename}`);
+      }
+
       source = {
-        codeBefore: truncate(
-          readFileAtRef(baseSha, candidate.filename) ?? "",
-          MAX_CODE_CHARS,
-        ),
-        codeAfter: truncate(
-          readFileAtRef(headSha, candidate.filename) ?? "",
-          MAX_CODE_CHARS,
-        ),
+        codeBefore: truncate(rawCodeBefore, MAX_CODE_BEFORE_CHARS),
+        codeAfter: truncate(rawCodeAfter, MAX_CODE_AFTER_CHARS),
       };
       sourceCache.set(candidate.filename, source);
     }
 
-    const result = await provider.analyze({
-      filename: candidate.filename,
-      codeBefore: source.codeBefore,
-      codeAfter: source.codeAfter,
-      documentationFile: candidate.documentationFile,
-      documentationSection: truncate(candidate.section.content, MAX_DOC_CHARS),
-      sectionHeading: candidate.section.heading,
-    });
-
-    if (!result.stale || result.confidence < confidenceThreshold) {
-      continue;
+    if (candidate.section.content.length > MAX_DOCUMENTATION_CHARS) {
+      core.debug(
+        `Semantic input truncated for ${candidate.documentationFile}`,
+      );
     }
 
-    findings.push({
-      type: "semantic-drift",
-      documentationFile: candidate.documentationFile,
-      reference: result.staleText ?? candidate.section.heading,
-      message: result.reason,
-      confidence: result.confidence,
-      locations: [
-        {
-          line: candidate.section.startLine,
-          section: [candidate.section.heading],
-        },
-      ],
-      ...(result.suggestedText
-        ? {
-            suggestion: result.suggestedText,
-          }
-        : {}),
-    });
+    stats.calls++;
+
+    try {
+      const result = await withTimeout(
+        provider.analyze({
+          filename: candidate.filename,
+          codeBefore: source.codeBefore,
+          codeAfter: source.codeAfter,
+          documentationFile: candidate.documentationFile,
+          documentationSection: truncate(
+            candidate.section.content,
+            MAX_DOCUMENTATION_CHARS,
+          ),
+          sectionHeading: candidate.section.heading,
+        }),
+        timeoutMilliseconds,
+      );
+
+      if (!result.stale || result.confidence < confidenceThreshold) {
+        continue;
+      }
+
+      findings.push({
+        type: "semantic-drift",
+        documentationFile: candidate.documentationFile,
+        reference: result.staleText ?? candidate.section.heading,
+        message: result.reason,
+        confidence: result.confidence,
+        locations: [
+          {
+            line: candidate.section.startLine,
+            section: [candidate.section.heading],
+          },
+        ],
+        ...(result.suggestedText
+          ? {
+              suggestion: result.suggestedText,
+            }
+          : {}),
+      });
+    } catch (error) {
+      stats.errors++;
+      core.warning(
+        `Semantic analysis skipped for ${candidate.documentationFile}: ` +
+          safeSemanticErrorMessage(error),
+      );
+    }
   }
 
-  return findings;
+  stats.findings = findings.length;
+  return { findings, stats };
 }
+import * as core from "@actions/core";

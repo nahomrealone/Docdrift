@@ -9,6 +9,7 @@ export interface SemanticConfig {
     confidenceThreshold: number;
     provider: "gemini";
     model: string;
+    maxCalls: number;
 }
 export interface DocumentationPathConfig {
     include: string[];
